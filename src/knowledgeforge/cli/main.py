@@ -7,11 +7,13 @@ from pathlib import Path
 import click
 
 from ..adapter.vault import VaultAdapter
+from ..adapter.universal import UniversalAdapter
 from ..pipeline import ForgePipeline
 from ..store.sqlite import SQLiteGraphStore
 
 _ADAPTERS = {
     "vault": VaultAdapter,
+    "universal": UniversalAdapter,
 }
 
 _DEFAULT_DB = Path("data/graph.db")
@@ -23,12 +25,12 @@ def cli() -> None:
 
 
 @cli.command()
-@click.option("--adapter", "-a", default="vault",
+@click.option("--adapter", "-a", default="universal",
               type=click.Choice(list(_ADAPTERS)), show_default=True,
-              help="Adapter to use for this data source.")
+              help="Adapter to use. 'universal' handles any file type.")
 @click.option("--source", "-s", required=True,
-              type=click.Path(exists=True, file_okay=False, path_type=Path),
-              help="Path to your raw data (vault directory, dataset folder, etc.)")
+              type=click.Path(exists=True, path_type=Path),
+              help="Path to your raw data — any file or directory.")
 @click.option("--db", default=str(_DEFAULT_DB), show_default=True,
               help="SQLite graph store path.")
 @click.option("--include-dirs", multiple=True,
