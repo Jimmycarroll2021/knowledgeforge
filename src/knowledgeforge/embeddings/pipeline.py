@@ -292,7 +292,7 @@ class EmbeddingPipeline:
         """Fallback: ChromaDB cosine similarity search."""
         collection = self._get_collection()
         result = collection.get(ids=[entity_id], include=["embeddings"])
-        if not result["embeddings"]:
+        if result["embeddings"] is None or len(result["embeddings"]) == 0:
             return []
 
         where = {"kind": kind_filter} if kind_filter else None

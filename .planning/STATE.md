@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-06-21)
 
 **Core value:** Raw unstructured data in → validated, queryable, provenance-backed knowledge graph out. One command.  
-**Current focus:** Phase 6 — FastAPI + Docker
+**Current focus:** Phase 7 — Evaluation & Docs
 
 ---
 
@@ -18,8 +18,8 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 | 3 | Entity Resolution | ✅ COMPLETE | 3-phase (exact → Jaro-Winkler → WCC), 447 aliases written |
 | 4 | Embedding Pipeline | ✅ COMPLETE | sentence-transformers + GraphSAGE MEAN agg + turbovec SIMD + ChromaDB |
 | 5 | GraphRAG | ✅ COMPLETE | BFS k-hop, grounded LLM answers, path finder, OAuth CLI fallback |
-| 6 | Query API | ❌ NOT STARTED | FastAPI + Docker — NEXT |
-| 7 | Evaluation & Docs | ❌ NOT STARTED | Benchmarks, CI, research alignment doc |
+| 6 | Query API | ✅ COMPLETE | FastAPI + Docker, `knowledgeforge serve`, gate verified |
+| 7 | Evaluation & Docs | ❌ NOT STARTED | Benchmarks, CI, research alignment doc — NEXT |
 
 ---
 
