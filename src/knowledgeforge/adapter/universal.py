@@ -35,6 +35,10 @@ _SUPPORTED_SUFFIXES = _TEXT_LIKE | _STRUCTURED | _RICH_DOC
 _ALWAYS_EXCLUDE = {
     ".git", ".hg", ".venv", "__pycache__", ".ruff_cache", ".mypy_cache",
     ".pytest_cache", "node_modules", "dist", "build", ".eggs",
+    # operational dirs — contain pipeline logs/manifests/tools, not knowledge
+    "manifests", "logs", "raw", "redacted", "tmp", "cache",
+    ".obsidian", ".planning", ".codex",
+    "tools", "scripts", "migration", "system",
 }
 
 _MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import click
@@ -10,6 +11,16 @@ from ..adapter.vault import VaultAdapter
 from ..adapter.universal import UniversalAdapter
 from ..pipeline import ForgePipeline
 from ..store.sqlite import SQLiteGraphStore
+
+
+def _load_env() -> None:
+    env = Path(".env")
+    if env.exists():
+        for line in env.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip())
 
 _ADAPTERS = {
     "vault": VaultAdapter,
@@ -137,3 +148,167 @@ def provenance(subject: str, db: str, fmt: str) -> None:
             f"  {r['subject'][:40]:<42} {r['predicate']:<25} {r['object'][:50]}"
             f"  [{r['confidence']:.2f}] via {r['source_doc']}"
         )
+
+
+@cli.command()
+@click.option("--source", "-s", required=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Source directory or file to extract triples from.")
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True)
+@click.option("--model", default="claude-haiku-4-5-20251001", show_default=True,
+              help="Claude model for extraction.")
+@click.option("--limit", default=None, type=int,
+              help="Max files to process (useful for testing).")
+@click.option("--dry-run", is_flag=True, help="Show what would be extracted, don't write.")
+def extract(source: Path, db: str, model: str, limit: int | None, dry_run: bool) -> None:
+    """Run LLM semantic triple extraction on SOURCE.
+
+    Reads each section of each file and asks Claude to extract
+    factual (subject, predicate, object) triples. Stores in
+    source_facts layer with extraction_method='llm'.
+
+    \b
+    Requires: ANTHROPIC_API_KEY in .env or environment.
+
+    \b
+    Examples:
+      knowledgeforge extract --source ~/KnowledgeGraph/algorithms --limit 5
+      knowledgeforge extract --source ~/KnowledgeGraph --db data/graph.db
+    """
+    _load_env()
+    from ..adapter.universal import UniversalAdapter
+    from ..extractor.llm import LLMExtractor
+    from ..store.sqlite import SQLiteGraphStore
+
+    adp = UniversalAdapter()
+    docs = adp.scan(source)
+    if limit:
+        docs = docs[:limit]
+
+    click.echo(f"\nLLM extraction — {len(docs)} files via {model}")
+    click.echo(f"  source: {source}")
+    if dry_run:
+        click.echo("  [DRY RUN — no writes]")
+        for d in docs:
+            click.echo(f"    {d.relative_path}")
+        return
+
+    extractor = LLMExtractor(model=model)
+    store = SQLiteGraphStore(Path(db))
+
+    total_added = total_skipped = total_triples = 0
+    with click.progressbar(docs, label="Extracting") as bar:
+        for doc in bar:
+            triples = extractor.extract(doc)
+            total_triples += len(triples)
+            added, skipped = store.add_triples(triples)
+            total_added += added
+            total_skipped += skipped
+
+    store.close()
+    click.echo(f"\nLLM extraction complete:")
+    click.echo(f"  files processed:  {len(docs)}")
+    click.echo(f"  triples extracted:{total_triples}")
+    click.echo(f"  triples added:    {total_added}")
+    click.echo(f"  duplicates skipped:{total_skipped}")
+
+
+@cli.command()
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True)
+@click.option("--threshold", default=0.85, show_default=True,
+              help="Jaro-Winkler similarity threshold for Phase 2 match.")
+def resolve(db: str, threshold: float) -> None:
+    """Run entity resolution — 3-phase pipeline from the vault spec.
+
+    Phase 1: exact normalised name match (same type)
+    Phase 2: Jaro-Winkler >= threshold (same type, blocked)
+    Phase 3: WCC on SIMILAR_TO edges
+
+    Writes SAME_AS edges to entity_aliases table (originals kept for provenance).
+    """
+    store = SQLiteGraphStore(Path(db))
+    from ..resolution.resolver import EntityResolver
+    resolver = EntityResolver(store, threshold=threshold)
+
+    click.echo(f"\nEntity resolution (threshold={threshold})")
+    result = resolver.resolve()
+    store.close()
+
+    click.echo(f"  Phase 1 (exact):       {result['phase1_merges']} merges")
+    click.echo(f"  Phase 2 (jaro-winkler):{result['phase2_merges']} merges")
+    click.echo(f"  Phase 3 (structural):  {result['phase3_merges']} merges")
+    click.echo(f"  Total aliases written: {result['total_merges']}")
+
+
+@cli.command()
+@click.argument("question")
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True)
+@click.option("--hops", default=2, show_default=True,
+              help="k-hop neighbourhood expansion depth.")
+@click.option("--model", default="claude-haiku-4-5-20251001", show_default=True)
+@click.option("--path-only", is_flag=True, help="Find graph paths only — no LLM call.")
+@click.option("--from-entity", default=None, help="Path mode: start entity.")
+@click.option("--to-entity", default=None, help="Path mode: end entity.")
+def query(
+    question: str,
+    db: str,
+    hops: int,
+    model: str,
+    path_only: bool,
+    from_entity: str | None,
+    to_entity: str | None,
+) -> None:
+    """Query the graph using GraphRAG — graph-aware retrieval + LLM answer.
+
+    Extracts anchor entities from QUESTION, expands k-hop subgraph,
+    injects facts into Claude context, returns grounded answer.
+
+    \b
+    From concepts/GraphRAG.md:
+      KGSWC 2024: hallucination F1 0.77 → 0.94 with KG injection.
+
+    \b
+    Requires: ANTHROPIC_API_KEY in .env or environment.
+
+    \b
+    Examples:
+      knowledgeforge query "what is GraphSAGE and how does it work?"
+      knowledgeforge query "how does entity resolution connect to GraphSAGE?"
+      knowledgeforge query "x" --path-only --from-entity GraphSAGE --to-entity TransE
+    """
+    _load_env()
+    from ..inference.graphrag import GraphRAG
+
+    store = SQLiteGraphStore(Path(db))
+    rag = GraphRAG(store, model=model, hops=hops)
+
+    if path_only and from_entity and to_entity:
+        paths = rag.path(from_entity, to_entity)
+        if not paths:
+            click.echo(f"No path found between {from_entity!r} and {to_entity!r}")
+        else:
+            for edge in paths[0]:
+                click.echo(f"  ({edge['subject']})-[{edge['predicate']}]->({edge['object']})")
+        store.close()
+        return
+
+    click.echo(f"\nGraphRAG query ({hops}-hop, model={model})")
+    click.echo(f"  question: {question}\n")
+
+    result = rag.ask(question)
+    store.close()
+
+    click.echo(f"Anchor entities: {', '.join(result['anchor_entities'][:5]) or 'none'}")
+    click.echo(f"Subgraph size:   {result['subgraph_size']} triples\n")
+    click.echo("Answer:")
+    click.echo(result["answer"])
+
+    if result["evidence"]:
+        click.echo(f"\nTop evidence ({min(5, len(result['evidence']))} triples):")
+        skip = {"CONTAINS_KEY", "HAS_FILE_TYPE"}
+        shown = 0
+        for t in result["evidence"]:
+            if t["predicate"] not in skip and shown < 5:
+                click.echo(f"  ({t['subject']})-[{t['predicate']}]->({t['object']})"
+                           f"  [conf={t['confidence']:.2f}]")
+                shown += 1
