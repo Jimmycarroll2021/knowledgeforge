@@ -104,10 +104,12 @@ class GraphRAG:
 
     def _find_anchors(self, question: str) -> list[str]:
         """Find entity IDs that match terms in the question."""
+        import re as _re
         terms = [
-            w for w in question.lower().split()
-            if len(w) > 3 and w not in self._STOPWORDS
+            _re.sub(r"[^\w]", "", w)
+            for w in question.lower().split()
         ]
+        terms = [w for w in terms if len(w) > 3 and w not in self._STOPWORDS]
         anchors: list[str] = []
         seen: set[str] = set()
 

@@ -1,0 +1,28 @@
+FROM python:3.12-slim
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Non-root user
+RUN useradd -m -u 1000 appuser
+
+WORKDIR /app
+
+# Install dependencies first (layer caching)
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Copy source
+COPY src/ ./src/
+
+# Install project
+RUN uv sync --frozen --no-dev
+
+# Data directory
+RUN mkdir -p data/embeddings && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "knowledgeforge.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

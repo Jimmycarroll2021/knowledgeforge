@@ -364,6 +364,32 @@ def embed(db: str, embeddings: str, model: str, batch_size: int) -> None:
     click.echo(f"  model:             {result['model']}")
 
 
+@cli.command()
+@click.option("--host", default="0.0.0.0", show_default=True)
+@click.option("--port", default=8000, show_default=True)
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True)
+@click.option("--embeddings", default="data/embeddings", show_default=True)
+@click.option("--reload", is_flag=True, help="Auto-reload on code changes (dev only).")
+def serve(host: str, port: int, db: str, embeddings: str, reload: bool) -> None:
+    """Start the KnowledgeForge REST API server.
+
+    \b
+    Examples:
+      knowledgeforge serve
+      knowledgeforge serve --host 127.0.0.1 --port 8080
+      knowledgeforge serve --reload
+    """
+    import uvicorn
+    os.environ.setdefault("KF_DB_PATH", db)
+    os.environ.setdefault("KF_EMBEDDINGS_PATH", embeddings)
+    uvicorn.run(
+        "knowledgeforge.api.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
 @cli.command("similar")
 @click.argument("entity")
 @click.option("--db", default=str(_DEFAULT_DB), show_default=True)
