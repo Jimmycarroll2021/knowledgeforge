@@ -12,9 +12,23 @@ Default hops=2 safe to ~10K nodes per KF spec. hops=3+ can exceed context window
 from __future__ import annotations
 
 import os
+import subprocess
 from collections import deque
 
 from ..store.sqlite import SQLiteGraphStore
+
+
+def _claude_cli(prompt: str, system: str, model: str) -> str:
+    """Call Claude via `claude -p` (OAuth — no API key needed)."""
+    full = f"<system>\n{system}\n</system>\n\n{prompt}"
+    r = subprocess.run(
+        ["claude", "-p", "--model", model, "-"],
+        input=full, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"claude CLI failed: {r.stderr[:200]}")
+    return r.stdout.strip()
 
 _SYSTEM_PROMPT = """You are a knowledge graph assistant. Answer questions using ONLY the provided graph facts.
 
@@ -50,6 +64,7 @@ class GraphRAG:
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self._hops = hops
         self._client: object | None = None
+        self._use_cli = not bool(self._api_key)
 
     def ask(self, question: str) -> dict:
         """Answer a question using graph-grounded retrieval.
@@ -170,9 +185,11 @@ class GraphRAG:
         return "\n".join(lines)
 
     def _call_llm(self, question: str, facts: str) -> str:
-        client = self._get_client()
         context = f"Graph facts:\n{facts}\n\nQuestion: {question}"
         try:
+            if self._use_cli:
+                return _claude_cli(context, _SYSTEM_PROMPT, self._model)
+            client = self._get_client()
             response = client.messages.create(
                 model=self._model,
                 max_tokens=1024,
@@ -185,11 +202,6 @@ class GraphRAG:
 
     def _get_client(self):
         if self._client is None:
-            if not self._api_key:
-                raise RuntimeError(
-                    "ANTHROPIC_API_KEY not set. "
-                    "Set it in .env or export ANTHROPIC_API_KEY=..."
-                )
             import anthropic
             self._client = anthropic.Anthropic(api_key=self._api_key)
         return self._client

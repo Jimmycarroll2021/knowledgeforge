@@ -3,9 +3,17 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import click
+
+# Windows cp1252 terminals can't handle Unicode → force UTF-8 output
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from ..adapter.vault import VaultAdapter
 from ..adapter.universal import UniversalAdapter
@@ -185,7 +193,9 @@ def extract(source: Path, db: str, model: str, limit: int | None, dry_run: bool)
     if limit:
         docs = docs[:limit]
 
-    click.echo(f"\nLLM extraction — {len(docs)} files via {model}")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    backend = "Anthropic SDK" if api_key else "claude CLI (OAuth)"
+    click.echo(f"\nLLM extraction — {len(docs)} files via {model} [{backend}]")
     click.echo(f"  source: {source}")
     if dry_run:
         click.echo("  [DRY RUN — no writes]")

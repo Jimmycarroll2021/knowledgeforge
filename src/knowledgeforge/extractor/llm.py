@@ -85,11 +85,32 @@ Rules:
 """
 
 
+def _call_claude_cli(prompt: str, system: str, model: str) -> str:
+    """Call Claude via `claude -p` CLI (uses OAuth — no API key needed)."""
+    import subprocess
+    full_prompt = f"<system>\n{system}\n</system>\n\n{prompt}"
+    result = subprocess.run(
+        ["claude", "-p", "--model", model, "-"],
+        input=full_prompt,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"claude CLI failed: {result.stderr[:200]}")
+    return result.stdout.strip()
+
+
 class LLMExtractor:
     """Extracts semantic triples from text using Claude.
 
     Splits text at section boundaries (headings), extracts per section.
-    Requires ANTHROPIC_API_KEY in environment or .env file.
+
+    Auth priority:
+      1. ANTHROPIC_API_KEY env var → uses Anthropic Python SDK
+      2. Fallback → calls `claude -p` CLI (uses Claude Code OAuth auth)
     """
 
     def __init__(
@@ -102,14 +123,10 @@ class LLMExtractor:
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self._max_sections = max_sections
         self._client: object | None = None
+        self._use_cli = not bool(self._api_key)
 
     def _get_client(self):
         if self._client is None:
-            if not self._api_key:
-                raise RuntimeError(
-                    "ANTHROPIC_API_KEY not set. "
-                    "Set it in .env or export ANTHROPIC_API_KEY=..."
-                )
             import anthropic
             self._client = anthropic.Anthropic(api_key=self._api_key)
         return self._client
@@ -151,17 +168,20 @@ class LLMExtractor:
         return sections
 
     def _extract_section(self, section: str, doc: SourceDocument) -> list[Triple]:
-        client = self._get_client()
         ts = now_iso()
 
         try:
-            response = client.messages.create(
-                model=self._model,
-                max_tokens=1024,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": section[:4000]}],
-            )
-            raw = response.content[0].text.strip()
+            if self._use_cli:
+                raw = _call_claude_cli(section[:4000], _SYSTEM_PROMPT, self._model)
+            else:
+                client = self._get_client()
+                response = client.messages.create(
+                    model=self._model,
+                    max_tokens=1024,
+                    system=_SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": section[:4000]}],
+                )
+                raw = response.content[0].text.strip()
             # Strip markdown code fences if present
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
