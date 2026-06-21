@@ -322,3 +322,82 @@ def query(
                 click.echo(f"  ({t['subject']})-[{t['predicate']}]->({t['object']})"
                            f"  [conf={t['confidence']:.2f}]")
                 shown += 1
+
+
+@cli.command()
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True)
+@click.option("--embeddings", default="data/embeddings", show_default=True,
+              help="ChromaDB embeddings store path.")
+@click.option("--model", default="all-MiniLM-L6-v2", show_default=True,
+              help="Sentence-transformer model for semantic embeddings.")
+@click.option("--batch-size", default=64, show_default=True)
+def embed(db: str, embeddings: str, model: str, batch_size: int) -> None:
+    """Build entity embeddings — semantic + GraphSAGE-style structural aggregation.
+
+    Uses sentence-transformers for semantic embeddings, mean-pools
+    1-hop neighbour embeddings (GraphSAGE MEAN aggregator), stores
+    in ChromaDB, builds turbovec SIMD index for fast similarity search.
+
+    \b
+    From ROADMAP.md Phase 4 / Hamilton 2017 (GraphSAGE):
+      h_v = MEAN(h_v ∪ {h_u ∀u ∈ N(v)})
+
+    \b
+    Examples:
+      knowledgeforge embed
+      knowledgeforge embed --model all-mpnet-base-v2 --batch-size 32
+    """
+    store = SQLiteGraphStore(Path(db))
+    from ..embeddings.pipeline import EmbeddingPipeline
+
+    pipeline = EmbeddingPipeline(store, chroma_path=embeddings, model_name=model)
+
+    click.echo(f"\nEmbedding pipeline — {model}")
+    click.echo(f"  graph:      {db}")
+    click.echo(f"  embeddings: {embeddings}\n")
+
+    result = pipeline.embed_all(batch_size=batch_size)
+    store.close()
+
+    click.echo(f"  entities embedded: {result['entities_embedded']}")
+    click.echo(f"  already cached:    {result['skipped']}")
+    click.echo(f"  model:             {result['model']}")
+
+
+@cli.command("similar")
+@click.argument("entity")
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True)
+@click.option("--embeddings", default="data/embeddings", show_default=True)
+@click.option("-k", default=10, show_default=True, help="Number of results.")
+@click.option("--kind", default=None, help="Filter by entity kind (Algorithm, Concept, etc.)")
+@click.option("--text", is_flag=True, help="Treat ENTITY as a free-text query instead of entity ID.")
+def similar(entity: str, db: str, embeddings: str, k: int, kind: str | None, text: bool) -> None:
+    """Find entities similar to ENTITY using semantic + structural embeddings.
+
+    Uses turbovec (4-bit SIMD quantisation) for fast approximate search.
+
+    \b
+    Examples:
+      knowledgeforge similar GraphSAGE
+      knowledgeforge similar GraphSAGE --kind Algorithm -k 5
+      knowledgeforge similar "inductive node embedding" --text
+    """
+    store = SQLiteGraphStore(Path(db))
+    from ..embeddings.pipeline import EmbeddingPipeline
+
+    pipeline = EmbeddingPipeline(store, chroma_path=embeddings)
+    pipeline._build_turbo_index()
+
+    if text:
+        results = pipeline.search_by_text(entity, k=k, kind_filter=kind)
+    else:
+        results = pipeline.find_similar(entity, k=k, kind_filter=kind)
+    store.close()
+
+    if not results:
+        click.echo(f"No embeddings found for '{entity}'. Run 'knowledgeforge embed' first.")
+        return
+
+    click.echo(f"\nTop {len(results)} similar to '{entity}':")
+    for r in results:
+        click.echo(f"  [{r['score']:.3f}] {r['entity_id'][:60]}  ({r['kind']})")
