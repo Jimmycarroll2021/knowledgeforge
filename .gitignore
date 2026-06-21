@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+config.yaml
+!config.example.yaml
+
+# Data & databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+data/
+chroma/
+
+# Logs
+logs/
+*.log
+*.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Test artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage

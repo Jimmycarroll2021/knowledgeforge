@@ -1,0 +1,35 @@
+{
+  "project": "KnowledgeForge",
+  "created": "2026-06-21",
+  "workflow": {
+    "mode": "YOLO",
+    "granularity": "standard",
+    "execution": "parallel",
+    "git_tracking": true,
+    "research": "skip",
+    "plan_check": true,
+    "verifier": true,
+    "ai_models": "quality"
+  },
+  "stack": {
+    "language": "python",
+    "package_manager": "uv",
+    "venv": ".venv/Scripts/python.exe",
+    "graph_store": "sqlite",
+    "vector_store": "chromadb",
+    "llm": "anthropic-sdk",
+    "container": "docker"
+  },
+  "repo": {
+    "github_user": "Jimmycarroll2021",
+    "repo_name": "knowledgeforge",
+    "visibility": "public"
+  },
+  "phase_count": 7,
+  "source_fragments": [
+    "C:/Users/j_car/redact-au/services/redact-au-workspace/src/redact_au_workspace/knowledgegraph.py",
+    "C:/Users/j_car/redact-au/services/redact-au-workspace/scripts/ingest_knowledgegraph_vault.py",
+    "C:/Users/j_car/.mempalace/palace/chroma.sqlite3",
+    "C:/Users/j_car/.mempalace/knowledge_graph.sqlite3"
+  ]
+}
