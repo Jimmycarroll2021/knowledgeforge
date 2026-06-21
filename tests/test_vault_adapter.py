@@ -1,5 +1,3 @@
-from pathlib import Path
-import pytest
 from knowledgeforge.adapter.vault import VaultAdapter
 from knowledgeforge.contracts import Adapter
 

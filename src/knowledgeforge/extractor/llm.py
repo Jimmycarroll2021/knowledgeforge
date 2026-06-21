@@ -19,13 +19,35 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..contracts import SourceDocument, Triple, now_iso
+from ..contracts import AdapterSchema, SourceDocument, Triple, now_iso
+
+if TYPE_CHECKING:
+    import anthropic
 
 _HEADING_SPLIT_RE = re.compile(r"^#{1,3}\s+.+$", re.MULTILINE)
 _CODE_FENCE_RE = re.compile(r"^```[^\n]*\n?", re.MULTILINE)  # strip fences only, keep content
 _FRONTMATTER_RE = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 _MIN_SECTION_CHARS = 60
+
+# Confidence below this routes a triple to the untrusted llm_hypotheses layer.
+_HYPOTHESIS_CONFIDENCE_THRESHOLD = 0.75
+
+# Allowed predicates — the single source of truth shared by the extraction
+# prompt and schema(), so the two cannot drift. Edit here only.
+_ALLOWED_PREDICATES: tuple[str, ...] = (
+    "PROPOSED_BY", "TYPE_OF", "IMPROVES_ON", "EXTENDS", "EVALUATES_ON",
+    "ACHIEVES", "SCALES_TO", "USED_IN", "AUTHORED_BY", "PUBLISHED_IN",
+    "RELATED_TO", "DEFINED_AS", "PART_OF", "REQUIRES", "OUTPERFORMS",
+    "IMPLEMENTED_IN", "SIMILAR_TO",
+)
+
+# Allowed entity kinds (used for both source_kind and target_kind).
+_ALLOWED_ENTITY_KINDS: tuple[str, ...] = (
+    "Algorithm", "Concept", "Paper", "Person", "Dataset",
+    "Organization", "Metric", "System", "Value",
+)
 
 # Predicates aligned with the KnowledgeForge ontology (from vault notes)
 _PREDICATE_GUIDANCE = """
@@ -60,7 +82,7 @@ This means: subjects and objects must be specific named entities, predicates mus
 {_PREDICATE_GUIDANCE}
 
 Entity types (use these exactly):
-  Algorithm, Concept, Paper, Person, Dataset, Organization, Metric, System, Value
+  {", ".join(_ALLOWED_ENTITY_KINDS)}
 
 Output JSON only. No markdown. No explanation.
 Schema:
@@ -79,7 +101,10 @@ Schema:
 }}
 
 Rules:
-- confidence 0.9 = directly stated; 0.75 = strongly implied; 0.6 = background knowledge being applied
+- EVERY triple MUST be supported by the provided document. The "evidence" field must
+  be a verbatim span copied from the text. Never assert background knowledge, outside
+  facts, or anything not explicitly stated in the text — if it is not in the text, omit it.
+- confidence 0.9 = directly stated; 0.75 = strongly implied by the text (still grounded)
 - If no clear triples exist, return {{"triples": []}}
 - Max 15 triples per section
 - Objects must be specific, not vague ("Hamilton 2017" not "a paper")
@@ -114,6 +139,8 @@ class LLMExtractor:
       2. Fallback → calls `claude -p` CLI (uses Claude Code OAuth auth)
     """
 
+    ADAPTER_NAME = "llm"
+
     def __init__(
         self,
         model: str = "claude-haiku-4-5-20251001",
@@ -123,14 +150,51 @@ class LLMExtractor:
         self._model = model
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self._max_sections = max_sections
-        self._client: object | None = None
+        self._client: anthropic.Anthropic | None = None
         self._use_cli = not bool(self._api_key)
 
-    def _get_client(self):
+    def _get_client(self) -> anthropic.Anthropic:
         if self._client is None:
             import anthropic
             self._client = anthropic.Anthropic(api_key=self._api_key)
         return self._client
+
+    def schema(self) -> AdapterSchema:
+        """Declared predicate/kind surface — lets ForgePipeline._validate
+        reject any LLM triple using a predicate or entity kind outside the
+        extraction prompt's allowed sets."""
+        return AdapterSchema(
+            adapter_name=self.ADAPTER_NAME,
+            predicates=list(_ALLOWED_PREDICATES),
+            source_kinds=list(_ALLOWED_ENTITY_KINDS),
+            target_kinds=list(_ALLOWED_ENTITY_KINDS),
+        )
+
+    def scan(self, source: Path) -> list[SourceDocument]:
+        """Scan a single file or directory for documents to extract from.
+
+        Present so LLMExtractor satisfies the Adapter protocol (scan/extract/
+        schema). Mirrors VaultAdapter's suffix/size discipline without its
+        directory-include logic, since LLM extraction is content-agnostic.
+        """
+        root = source.expanduser().resolve()
+        if root.is_file():
+            return [SourceDocument.from_path(root, root.parent)]
+        if not root.is_dir():
+            raise ValueError(f"Source path is not a file or directory: {root}")
+
+        docs: list[SourceDocument] = []
+        for path in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
+            if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if size <= 0:
+                continue
+            docs.append(SourceDocument.from_path(path, root))
+        return docs
 
     def extract(self, doc: SourceDocument) -> list[Triple]:
         """Extract semantic triples from a SourceDocument."""
@@ -188,7 +252,8 @@ class LLMExtractor:
                     system=_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": section[:4000]}],
                 )
-                raw = response.content[0].text.strip()
+                block = response.content[0]
+                raw = block.text.strip() if block.type == "text" else ""
             # Strip markdown code fences if present
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
@@ -199,6 +264,15 @@ class LLMExtractor:
         triples: list[Triple] = []
         for item in data.get("triples", []):
             try:
+                confidence = float(item.get("confidence", 0.8))
+                # Low-confidence triples are untrusted hypotheses: route them to
+                # the llm_hypotheses layer so retrieval can exclude them. Grounded,
+                # higher-confidence triples keep the default source_facts layer.
+                layer = (
+                    "llm_hypotheses"
+                    if confidence < _HYPOTHESIS_CONFIDENCE_THRESHOLD
+                    else "source_facts"
+                )
                 t = Triple(
                     subject=str(item["subject"])[:240],
                     predicate=str(item["predicate"])[:80],
@@ -206,11 +280,12 @@ class LLMExtractor:
                     source_kind=str(item.get("subject_type", "Entity")),
                     target_kind=str(item.get("object_type", "Entity")),
                     evidence=str(item.get("evidence", ""))[:700],
-                    confidence=float(item.get("confidence", 0.8)),
+                    confidence=confidence,
                     source_doc=doc.relative_path,
                     extraction_method="llm",
                     timestamp=ts,
-                    adapter="llm_extractor",
+                    adapter=self.ADAPTER_NAME,
+                    layer=layer,
                 )
                 triples.append(t)
             except (KeyError, ValueError):

@@ -1,8 +1,4 @@
 import json
-import csv
-import io
-from pathlib import Path
-import pytest
 from knowledgeforge.adapter.universal import UniversalAdapter
 from knowledgeforge.contracts import Adapter
 

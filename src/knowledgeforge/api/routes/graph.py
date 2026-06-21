@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..models import (
@@ -9,11 +11,13 @@ from ..models import (
     TripleOut,
 )
 from ...inference.graphrag import GraphRAG
+from ...community.detector import CommunityDetector
+from ...resolution.resolver import EntityResolver
 
 router = APIRouter(prefix="/graph")
 
 
-def _triple_out(row: dict) -> TripleOut:
+def _triple_out(row: dict[str, Any]) -> TripleOut:
     return TripleOut(
         triple_id=row.get("triple_id", ""),
         subject=row["subject"],
@@ -94,3 +98,27 @@ def path(
         path=[PathEdge(subject=e["subject"], predicate=e["predicate"], object=e["object"]) for e in paths[0]],
         found=True,
     )
+
+
+@router.post("/community")
+def detect_communities(request: Request) -> dict[str, Any]:
+    store = request.app.state.store
+    return CommunityDetector(store).detect_and_summarise()
+
+
+@router.get("/community")
+def communities(request: Request) -> dict[str, Any]:
+    store = request.app.state.store
+    detector = CommunityDetector(store)
+    return {
+        "summaries": detector.load_summaries(),
+        "stats": detector.community_stats(),
+    }
+
+
+@router.post("/resolve")
+def resolve_entities(request: Request) -> dict[str, Any]:
+    store = request.app.state.store
+    resolver = EntityResolver(store, embed=request.app.state.embed)
+    resolver.resolve()
+    return resolver.stats()

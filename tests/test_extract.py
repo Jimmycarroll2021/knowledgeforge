@@ -1,7 +1,5 @@
 """Tests for the text extractor layer."""
-from pathlib import Path
 import json
-import pytest
 from knowledgeforge.adapter.extract import extract_text, _flatten_json
 
 

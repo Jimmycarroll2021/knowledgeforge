@@ -31,5 +31,28 @@ jobs:
       - name: Lint
         run: uv run ruff check src/ tests/
 
+      - name: Typecheck
+        run: uv run mypy src/knowledgeforge
+
       - name: Test
         run: uv run pytest tests/ -q
+
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t knowledgeforge:ci .
+
+      - name: Smoke test container
+        run: |
+          docker run -d -p 8000:8000 --name kf knowledgeforge:ci
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:8000/health; then echo " — healthy"; ok=1; break; fi
+            sleep 2
+          done
+          docker logs kf
+          docker rm -f kf
+          test -n "$ok"

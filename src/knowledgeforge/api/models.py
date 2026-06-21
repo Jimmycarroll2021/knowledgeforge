@@ -15,6 +15,7 @@ class TripleOut(BaseModel):
     layer: str
     timestamp: str
     evidence: str
+    lineage: list[str] = Field(default_factory=list)
 
 
 class IngestRequest(BaseModel):
@@ -38,6 +39,11 @@ class QueryRequest(BaseModel):
     question: str
     hops: int = Field(2, ge=1, le=4)
     model: str = "claude-haiku-4-5-20251001"
+    mode: str = Field(
+        "local",
+        pattern="^(local|global)$",
+        description="local = k-hop subgraph retrieval; global = community-summary synthesis, Edge et al. 2024",
+    )
 
 
 class EvidenceTriple(BaseModel):
@@ -48,6 +54,8 @@ class EvidenceTriple(BaseModel):
     source_doc: str
     layer: str
     evidence: str
+    timestamp: str = ""
+    lineage: list[str] = Field(default_factory=list)
 
 
 class QueryResponse(BaseModel):
@@ -56,6 +64,8 @@ class QueryResponse(BaseModel):
     anchor_entities: list[str]
     subgraph_size: int
     cited_triples: list[EvidenceTriple]
+    mode: str = "local"
+    communities_used: int = 0
 
 
 class EmbedRequest(BaseModel):

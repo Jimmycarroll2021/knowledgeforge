@@ -12,6 +12,7 @@ Environment variables (all optional):
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,6 +22,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from ..store.sqlite import SQLiteGraphStore
 from ..embeddings.pipeline import EmbeddingPipeline
 from .routes import health, ingest, query, embed, graph
+from .security import (
+    ApiKeyMiddleware,
+    RateLimitMiddleware,
+    RequestLoggingMiddleware,
+    setup_logging,
+)
 
 
 def _env(key: str, default: str) -> str:
@@ -28,7 +35,8 @@ def _env(key: str, default: str) -> str:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    setup_logging()
     db_path = Path(_env("KF_DB_PATH", "data/graph.db"))
     embeddings_path = _env("KF_EMBEDDINGS_PATH", "data/embeddings")
 
@@ -61,6 +69,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Starlette runs middleware in reverse registration order (last added = outermost).
+    # Register inner→outer so execution is: request-logging → rate-limit → auth.
+    app.add_middleware(ApiKeyMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
 
     app.include_router(health.router, tags=["ops"])
     app.include_router(ingest.router, tags=["ingest"])

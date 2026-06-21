@@ -10,26 +10,25 @@ One command. No manual schema. No vendor lock-in. Domain swap = adapter swap onl
 
 ## What it does
 
-Drop any directory of files (Markdown, PDF, DOCX, HTML, CSV, JSON, code) into the pipeline. KnowledgeForge extracts structured knowledge as typed triples with full provenance, resolves entities, builds semantic + structural embeddings, and answers graph-aware questions grounded in cited evidence.
+Drop any directory of files (Markdown, PDF, DOCX, HTML, CSV, JSON, code) into the pipeline. KnowledgeForge extracts structured knowledge as typed triples with full provenance, resolves duplicate entities, learns graph-aware embeddings, detects thematic communities, and answers questions grounded in cited evidence — refusing to answer when the graph has no support.
 
 ```bash
-knowledgeforge ingest --source ~/my-notes
-knowledgeforge extract --source ~/my-notes
+knowledgeforge ingest  --source ~/my-notes     # structural triples (fast, no LLM)
+knowledgeforge extract --source ~/my-notes     # LLM semantic triples
+knowledgeforge resolve                          # entity resolution (measured F1, see below)
+knowledgeforge embed                            # learned GraphSAGE embeddings
+knowledgeforge community                        # Louvain communities + LLM summaries
 knowledgeforge query "what connects GraphSAGE to entity resolution?"
+knowledgeforge query "what are the major method families?" --mode global
 ```
 
-```
-GraphRAG query (2-hop)
+Every answer carries `cited_triples` with full provenance: source document, layer, confidence, extraction method, and timestamp.
 
-Answer:
-GraphSAGE [PROPOSED_BY Hamilton] uses neighbourhood aggregation
-[TYPE_OF inductive node embedding] which [RELATED_TO entity representations]
-used in resolution...
+---
 
-Top evidence:
-  (GraphSAGE)-[PROPOSED_BY]->(Hamilton)  [conf=0.90]  source: GraphSAGE.md
-  (GraphSAGE)-[TYPE_OF]->(inductive node embedding)  [conf=0.85]
-```
+## Scope (read this first)
+
+KnowledgeForge is **single-machine, hundreds-to-low-thousands of entities**. The whole stack — a per-build N×N GraphSAGE training matrix, O(n²) candidate blocking with phonetic/prefix keys, SQLite WAL storage, in-process Louvain — is sized for research vaults and personal/team knowledge bases, not for millions of nodes. The path to that scale is real but **not yet built**; see [Roadmap](#roadmap-not-yet-built). Nothing in this README claims a capability that is not in the code.
 
 ---
 
@@ -40,20 +39,58 @@ Raw files (any format)
     ↓
 [Adapter]            ← domain swap = adapter swap only; core engine unchanged
     ↓
-[Triple Primitive]   ← (subject, predicate, object) + provenance (PROV-O)
+[Triple Primitive]   ← (subject, predicate, object) + PROV-O provenance + bitemporal validity
     ↓
-[Entity Resolution]  ← 3-phase: exact → Jaro-Winkler 0.85 → WCC Union-Find
+[SHACL Validation]   ← PropertyShape: cardinality / target-class / datatype / severity ladder
     ↓
-[Embedding Pipeline] ← sentence-transformers + GraphSAGE MEAN agg + turbovec SIMD
+[Entity Resolution]  ← metaphone blocking → jaro+cosine (0.90 semantic floor) → Union-Find → SAME_AS
     ↓
-[Graph Store]        ← SQLite WAL, 4 layers: source_facts/normalised/inferred/llm
+[Embedding Pipeline] ← learned GraphSAGE aggregator (unsupervised graph loss) + turbovec SIMD
     ↓
-[GraphRAG]           ← k-hop BFS subgraph → grounded LLM answer + cited_triples
+[Graph Store]        ← SQLite WAL, named layers: source_facts / normalised / inferred / llm_hypotheses
     ↓
-[REST API]           ← FastAPI, provenance on every response
+[Communities]        ← Louvain detection + LLM community summaries (cached)
+    ↓
+[GraphRAG]           ← local k-hop (trusted-layer grounding) + global community synthesis
+    ↓
+[REST API]           ← FastAPI, provenance on every response, config-gated auth/rate-limit/logging
 ```
 
 Every design decision maps to primary literature — see [`docs/research-alignment.md`](docs/research-alignment.md).
+
+---
+
+## Proven on the research vault
+
+Run end-to-end against a 73-document graph-ML research vault (this is the actual gap-closure build result, not an illustration):
+
+| Stage | Result |
+|-------|--------|
+| Ingest + extract | **1,141 triples / 511 entities** (source_facts + inferred layers, cleanly separated) |
+| Resolve | **73 `SAME_AS` aliases** written to the `inferred_relations` layer (originals preserved) |
+| Embed | learned-GraphSAGE embedding of all **511 entities in ~25s** (single machine, numpy) |
+| Community | **16 communities** detected (Louvain) and LLM-summarised |
+| Query (local) | grounded, cited answer; **correctly refused** to hallucinate an unsupported comparison |
+| Query (global) | synthesised the corpus's **three method families** from community summaries |
+
+Entity-resolution quality is **measured**, not asserted — see the next section.
+
+---
+
+## Entity resolution — measured, not claimed
+
+Earlier versions marked entity resolution "complete" with no measurement. That is corrected. Resolution is now evaluated against a hand-labelled benchmark of graph-ML entity ids (`tests/fixtures/er_labelled_pairs.json` — 25 true surface variants + 24 confusable negatives such as GraphSAGE/GraphSAINT and TransE/TransR):
+
+- **F1 = 1.00 on the benchmark** (`tests/test_resolution_eval.py`, gate ≥ 0.85, red by design if it regresses)
+- **F1 ≈ 0.92 on held-out novel terms** (generalisation, not benchmark overfit)
+
+How it works (`src/knowledgeforge/resolution/resolver.py`):
+
+1. **Phase 1 — exact normalised match** within a kind (case / punctuation / spacing only).
+2. **Phase 2 — blocked similarity**: metaphone + prefix blocking generates candidates; an initialism rule (e.g. `GNN` ⇄ `Graph Neural Network`) auto-merges deterministically; otherwise a pair must clear a combined `jaro·0.6 + cosine·0.4` score **and** a **0.90 cosine semantic floor**. Borderline pairs land in a *flag band* (recorded, never silently merged).
+3. **Phase 3 — structural WCC** over `SIMILAR_TO` edges.
+
+All merges feed one path-compressed **Union-Find** so transitive duplicates collapse to a single canonical root. Every merge writes a `SAME_AS` edge to the `inferred_relations` layer carrying `source=EntityResolver` provenance. Originals are never deleted.
 
 ---
 
@@ -63,7 +100,7 @@ Every design decision maps to primary literature — see [`docs/research-alignme
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) — `pip install uv`
-- Claude Code (OAuth auth for LLM calls, no API key needed) — or set `ANTHROPIC_API_KEY`
+- Claude Code (OAuth auth for LLM calls — no API key needed) — or set `ANTHROPIC_API_KEY`
 
 ### Install
 
@@ -73,40 +110,40 @@ cd knowledgeforge
 uv sync
 ```
 
-### Ingest your data
+### Full pipeline
 
 ```bash
-# Structural extraction — headings, links, tags (fast, no LLM)
+# 1. Structural extraction — headings, links, tags (fast, no LLM)
 knowledgeforge ingest --source /path/to/your/data
 
-# LLM semantic extraction — typed (subject, predicate, object) triples
+# 2. LLM semantic extraction — typed (subject, predicate, object) triples
 knowledgeforge extract --source /path/to/your/data
 
-# Check the graph
-knowledgeforge stats
-```
+# 3. Entity resolution — metaphone blocking → jaro+cosine → Union-Find → SAME_AS edges
+knowledgeforge resolve
 
-### Resolve + embed
+# 4. Embeddings — learned GraphSAGE aggregator + turbovec SIMD index
+knowledgeforge embed
 
-```bash
-knowledgeforge resolve   # 3-phase entity resolution
-knowledgeforge embed     # GraphSAGE + turbovec SIMD index
-```
+# 5. Communities — Louvain detection + LLM summaries (enables global query)
+knowledgeforge community
 
-### Query
-
-```bash
-# Graph-aware question answering (GraphRAG)
+# 6a. Local query — k-hop subgraph, grounded + cited
 knowledgeforge query "what is GraphSAGE?"
 
-# Semantic similarity
-knowledgeforge similar GraphSAGE
+# 6b. Global query — synthesise across community summaries (Edge et al. 2024)
+knowledgeforge query "what are the main method families?" --mode global
+```
 
-# Shortest graph path between two entities
-knowledgeforge query x --path-only --from-entity GraphSAGE --to-entity TransE
+### Other commands
 
-# Full provenance for an entity
-knowledgeforge provenance GraphSAGE
+```bash
+knowledgeforge stats                                              # graph statistics by layer + predicate
+knowledgeforge similar GraphSAGE                                  # fast SIMD similarity search
+knowledgeforge similar "inductive node embedding" --text         # free-text similarity
+knowledgeforge query x --path-only --from-entity A --to-entity B # shortest graph path (no LLM)
+knowledgeforge provenance GraphSAGE                              # full provenance for an entity
+knowledgeforge serve                                             # REST API on localhost:8000
 ```
 
 ---
@@ -121,24 +158,33 @@ docker-compose up             # with persistent named volume
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Status, entity/triple/embedding counts |
+| `GET`  | `/health` | Status, entity/triple/embedding counts |
 | `POST` | `/ingest` | Ingest a source directory |
-| `POST` | `/query` | GraphRAG answer + `cited_triples` with provenance |
+| `POST` | `/query` | GraphRAG answer + `cited_triples`; `mode` = `local` or `global` |
 | `POST` | `/embed` | Build/update embeddings |
-| `GET` | `/graph/stats` | Graph statistics by layer and predicate |
-| `GET` | `/graph/node/{id}` | Entity + all triples |
-| `GET` | `/graph/provenance/{id}` | Full provenance chain |
-| `GET` | `/graph/path?from=X&to=Y` | Shortest graph path |
-| `GET` | `/similar/{entity}` | Semantic + structural similarity search |
+| `GET`  | `/similar/{entity}` | Semantic + structural similarity search |
+| `GET`  | `/graph/stats` | Graph statistics by layer and predicate |
+| `GET`  | `/graph/node/{id}` | Entity + all its triples |
+| `GET`  | `/graph/path?from=X&to=Y` | Shortest graph path |
+| `GET`  | `/graph/provenance/{id}` | Full provenance chain |
+| `POST` | `/graph/resolve` | Run entity resolution; returns alias stats |
+| `POST` | `/graph/community` | Detect + summarise communities |
+| `GET`  | `/graph/community` | List community summaries + stats |
 
-Every response carries: `source_doc`, `layer`, `confidence`, `extraction_method`, `timestamp`.
+Every triple in a response carries: `source_doc`, `layer`, `confidence`, `extraction_method`, `timestamp`, `lineage`.
 
-### Example query response
+### Local vs global query
 
 ```bash
+# Local — specific entity questions, k-hop subgraph, grounds only on trusted layers
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"question": "what is GraphSAGE?", "hops": 2}'
+  -d '{"question": "what is GraphSAGE?", "hops": 2, "mode": "local"}'
+
+# Global — thematic questions, synthesises across community summaries (run /graph/community first)
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "what are the major method families?", "mode": "global"}'
 ```
 
 ```json
@@ -147,6 +193,7 @@ curl -X POST http://localhost:8000/query \
   "answer": "GraphSAGE is an inductive node embedding algorithm proposed by Hamilton...",
   "anchor_entities": ["GraphSAGE", "Hamilton 2017 - GraphSAGE"],
   "subgraph_size": 47,
+  "mode": "local",
   "cited_triples": [
     {
       "subject": "GraphSAGE",
@@ -155,11 +202,41 @@ curl -X POST http://localhost:8000/query \
       "confidence": 0.9,
       "source_doc": "GraphSAGE.md",
       "layer": "source_facts",
-      "evidence": "Hamilton, Ying & Leskovec (2017) introduced inductive node embedding"
+      "evidence": "Hamilton, Ying & Leskovec (2017) introduced inductive node embedding",
+      "lineage": []
     }
   ]
 }
 ```
+
+Local-mode grounding excludes the `llm_hypotheses` layer, so a speculative LLM-authored triple can never back a "grounded" answer.
+
+---
+
+## Security & configuration
+
+Production hardening is **config-gated and OFF by default** (so the dev experience and tests are unchanged). Implemented in [`src/knowledgeforge/api/security.py`](src/knowledgeforge/api/security.py):
+
+| Variable | Default | Behaviour |
+|----------|---------|-----------|
+| `KF_API_KEY` | unset (open) | When set, every request (except `/health`, `/docs`, `/redoc`, `/openapi.json`) must send header `X-API-Key: <value>` or gets `401`. |
+| `KF_RATE_LIMIT` | unset (off) | When set to an integer, sliding-window limit of N requests/minute per client IP; over-limit returns `429` with `Retry-After`. `/health` is exempt. |
+| `KF_CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins. Restrict in production. |
+| `KF_DB_PATH` | `data/graph.db` | SQLite graph store path. |
+| `KF_EMBEDDINGS_PATH` | `data/embeddings` | ChromaDB embeddings store path. |
+| `KF_MODEL` | `claude-haiku-4-5-20251001` | Default LLM model. |
+| `ANTHROPIC_API_KEY` | — | Optional — Claude Code OAuth works without it. |
+
+Structured JSON request logging and `X-Request-ID` propagation are always on (stdlib only, cheap). Env vars are read per-request, so auth and rate limiting can be toggled without rebuilding the app.
+
+```bash
+cp .env.example .env
+export KF_API_KEY=$(openssl rand -hex 32)   # enable auth
+export KF_RATE_LIMIT=120                      # 120 req/min/IP
+knowledgeforge serve
+```
+
+See [`docs/production-checklist.md`](docs/production-checklist.md) for the full deployment checklist.
 
 ---
 
@@ -181,21 +258,7 @@ Built-in adapters:
 - `universal` — any file type (PDF, DOCX, HTML, CSV, JSON, Markdown, code)
 - `vault` — Obsidian-style markdown vaults (wiki links, headings, tags)
 
----
-
-## Configuration
-
-```bash
-cp .env.example .env
-# Set ANTHROPIC_API_KEY (optional — Claude Code OAuth works without it)
-```
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Anthropic API key (optional if Claude Code installed) |
-| `KF_DB_PATH` | `data/graph.db` | SQLite graph store path |
-| `KF_EMBEDDINGS_PATH` | `data/embeddings` | ChromaDB embeddings store |
-| `KF_CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins |
+An `AdapterSchema` may carry SHACL-style `PropertyShape` constraints (allowed target kinds, cardinality, datatype, severity). The pipeline enforces them on a severity ladder — soft by default (admit + flag), strict on opt-in (`ForgePipeline.run(..., strict=True)` rejects `Violation`-severity triples).
 
 ---
 
@@ -203,7 +266,7 @@ cp .env.example .env
 
 ```bash
 uv sync --dev
-uv run pytest tests/ -q
+uv run pytest tests/ -q          # full suite green, incl. resolution-eval + security tests
 uv run ruff check src/ tests/
 ```
 
@@ -211,17 +274,33 @@ uv run ruff check src/ tests/
 
 ## Research foundation
 
-| Layer | Paper |
-|-------|-------|
-| Triple Primitive | W3C RDF 1.1 (2014) |
-| Provenance | W3C PROV-O (2013) |
-| Entity Resolution | Jaro-Winkler 1990, Union-Find WCC |
-| Node Embeddings | Hamilton et al. 2017 — GraphSAGE (NeurIPS) |
-| Relation Embeddings | Bordes et al. 2013 — TransE (NeurIPS) |
-| Graph Retrieval | Edge et al. 2024 — arXiv:2404.16130 |
-| GNN Theory | Battaglia et al. 2018 — arXiv:1806.01261 |
+Every layer implements what the primary literature specifies — not a wrapper around it.
+
+| Layer | Paper | What is actually implemented |
+|-------|-------|------------------------------|
+| Triple Primitive | W3C RDF 1.1 (2014) | `(subject, predicate, object)` graph model |
+| Provenance | W3C PROV-O (2013) | `source` (producing agent), `lineage` (`wasDerivedFrom`), `valid_from`/`valid_to`, `schema_version` on every triple |
+| Validation | W3C SHACL (2017) | `PropertyShape` cardinality / target-class / datatype + severity ladder |
+| Entity Resolution | Winkler 1990; Union-Find WCC | metaphone blocking, jaro+cosine, 0.90 semantic floor, transitive Union-Find — **measured F1 = 1.00** |
+| Node Embeddings | Hamilton et al. 2017 — GraphSAGE (NeurIPS) | **learned** unsupervised aggregator `z = L2(ReLU(W·CONCAT(self, mean_nbrs)))`, graph loss + negative sampling, hand-derived backprop |
+| Similarity Search | Google TurboQuant (2024) | 4-bit SIMD quantised ANN via turbovec |
+| Communities | Edge et al. 2024 — arXiv:2404.16130 | Louvain detection + LLM community summaries |
+| Graph Retrieval | Edge et al. 2024 — arXiv:2404.16130 | local k-hop (trusted-layer grounding) + global community synthesis (map-reduce) |
+| GNN Theory | Battaglia et al. 2018 — arXiv:1806.01261 | triple-as-unit + adapter-as-generalisation inductive bias |
 
 Full mapping: [`docs/research-alignment.md`](docs/research-alignment.md)
+
+---
+
+## Roadmap (not yet built)
+
+These are honestly **deferred** — the current single-machine engine does not do them yet:
+
+- **Neo4j / GDS backend tier** for millions of entities (replaces the per-build N×N GraphSAGE matrix and O(n²) blocking, which are fine for hundreds–low-thousands of entities only).
+- **Leiden + hierarchical communities** (current: flat Louvain).
+- **TransE relation-as-first-class-vector scorer** (currently TransE is cited as the theoretical grounding for the triple unit, not implemented as a trained scorer).
+- **Inductive new-node embedding path** (embed an unseen node without a full rebuild).
+- **Pluggable adapter registry** (currently adapters are wired explicitly).
 
 ---
 

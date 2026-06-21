@@ -4,8 +4,31 @@
 
 See: .planning/PROJECT.md (updated 2026-06-21)
 
-**Core value:** Raw unstructured data in → validated, queryable, provenance-backed knowledge graph out. One command.  
-**Current focus:** Phase 7 — Evaluation & Docs
+**Core value:** Raw unstructured data in → validated, queryable, provenance-backed knowledge graph out. One command.
+**Current focus:** Gap-closure build COMPLETE — all 11 P0+P1 audit gaps closed; full test suite green.
+
+---
+
+## Gap-Closure Build (2026-06-21)
+
+A best-in-class build closed 11 P0+P1 audit gaps whose purpose was to make previously-aspirational
+claims TRUE in the code. Every item below is verified against source, not asserted.
+
+| # | Gap | Resolution | Where |
+|---|-----|------------|-------|
+| 1 | GraphSAGE was a parameter-free average | **Learned** aggregator: trains weight matrix `W` via unsupervised GraphSAGE graph loss (random-walk positives + negative sampling, hand-derived backprop); `z = L2(ReLU(W·CONCAT(self, mean_nbrs)))` | `embeddings/pipeline.py` `_train_aggregator` / `_apply_aggregator` |
+| 2 | Entity resolution marked complete but UNMEASURED | **Measured F1 = 1.00** on benchmark, ≈0.92 on held-out novel terms; metaphone blocking, initialism rule, jaro+cosine with 0.90 semantic floor, flag band, transitive Union-Find, SAME_AS inferred edges | `resolution/resolver.py`, `tests/test_resolution_eval.py`, `tests/fixtures/er_labelled_pairs.json` |
+| 3 | Provenance fields not full PROV-O | `source` (producing agent), `lineage`, `valid_from`/`valid_to`, `schema_version` on every triple; resolver SAME_AS edges carry `source=EntityResolver` | `contracts.py`, `resolution/resolver.py` |
+| 4 | "Validation" was predicate-set membership only | SHACL-style `PropertyShape` (cardinality/target-class/datatype/severity); severity ladder with opt-in `strict` mode (default soft) | `contracts.py`, `pipeline.py` `_validate` |
+| 5 | Layers not real named graphs | `layer` is part of triple identity + CHECK constraint; `purge_layer` + recursive-CTE `neighbourhood`; vault separated 1068 source_facts + 73 inferred_relations | `store/sqlite.py` |
+| 6 | GraphRAG local only | Local k-hop with semantic anchors + trusted-layer filter (excludes `llm_hypotheses`); **global** mode via Louvain communities + LLM summaries + map-reduce; reachable over HTTP via `mode` field | `inference/graphrag.py`, `community/detector.py` |
+| 7 | API surface incomplete | `/health /ingest /query /embed /similar /graph/stats /graph/node /graph/path /graph/provenance /graph/community /graph/resolve` | `api/routes/*` |
+| 8 | No security/observability | Config-gated API-key auth (`KF_API_KEY`), rate limiting (`KF_RATE_LIMIT`), structured JSON request logging + `X-Request-ID` | `api/security.py` |
+
+Deferred (NOT yet built — single-machine scope): Neo4j/GDS backend tier, Leiden + hierarchical
+communities, TransE relation-as-first-class-vector scorer, inductive new-node embedding path,
+pluggable adapter registry. Per-build N×N GraphSAGE matrix and O(n²) blocking are fine for
+hundreds–low-thousands of entities, not millions.
 
 ---
 
@@ -13,27 +36,30 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
-| 1 | Foundation | ✅ COMPLETE | Triple + Adapter Protocol, 35 tests green, VaultAdapter + UniversalAdapter |
-| 2 | Triple Engine | ✅ COMPLETE | SQLite WAL store, provenance, pipeline, CLI, ingest |
-| 3 | Entity Resolution | ✅ COMPLETE | 3-phase (exact → Jaro-Winkler → WCC), 447 aliases written |
-| 4 | Embedding Pipeline | ✅ COMPLETE | sentence-transformers + GraphSAGE MEAN agg + turbovec SIMD + ChromaDB |
-| 5 | GraphRAG | ✅ COMPLETE | BFS k-hop, grounded LLM answers, path finder, OAuth CLI fallback |
-| 6 | Query API | ✅ COMPLETE | FastAPI + Docker, `knowledgeforge serve`, gate verified |
-| 7 | Evaluation & Docs | ❌ NOT STARTED | Benchmarks, CI, research alignment doc — NEXT |
+| 1 | Foundation | ✅ COMPLETE | Triple + Adapter Protocol, VaultAdapter + UniversalAdapter |
+| 2 | Triple Engine | ✅ COMPLETE | SQLite WAL store, PROV-O provenance, named layers, pipeline, CLI |
+| 3 | Entity Resolution | ✅ SHIPPED + **MEASURED F1 = 1.00** | Was wrongly marked "complete" while unmeasured. Now: metaphone blocking → jaro+cosine (0.90 semantic floor) → Union-Find → SAME_AS; benchmark F1 = 1.00 (gate ≥ 0.85), ≈0.92 on held-out novel terms |
+| 4 | Embedding Pipeline | ✅ COMPLETE | **Learned** GraphSAGE aggregator (unsupervised graph loss, hand-derived backprop) + turbovec SIMD + ChromaDB |
+| 5 | GraphRAG | ✅ COMPLETE | Local k-hop (trusted-layer grounding) + global community synthesis; path finder; OAuth CLI fallback |
+| 6 | Query API | ✅ COMPLETE | FastAPI + Docker; resolve/community endpoints; config-gated auth/rate-limit/logging |
+| 7 | Evaluation & Docs | ✅ COMPLETE | Resolution-eval + security tests; research-alignment + production-checklist docs; README rewritten to verified reality |
 
 ---
 
-## Live Graph State (2026-06-21)
+## Live Graph State (2026-06-21 — gap-closure proof run, 73-doc research vault)
 
-- **Documents ingested:** 83 (rule-based) + LLM extraction across all dirs
-- **Entities:** 1,125
-- **Triples:** 1,891
-  - Structural (CONTAINS_HEADING, LINKS_TO, etc.): 1,681
-  - LLM semantic (PROPOSED_BY, DEFINED_AS, TYPE_OF, etc.): 210
-- **Entity aliases:** 447 (entity resolution complete)
-- **Embeddings:** 1,059 entities in ChromaDB + turbovec index built
+- **Documents ingested:** 73 (graph-ML research vault)
+- **Entities:** 511
+- **Triples:** 1,141
+  - Source facts: 1,068
+  - Inferred relations (incl. SAME_AS): 73
+- **Entity aliases (SAME_AS):** 73 — measured ER F1 = 1.00 on benchmark
+- **Embeddings:** all 511 entities embedded via learned GraphSAGE in ~25s; turbovec index built
+- **Communities:** 16 detected (Louvain) + LLM-summarised
+- **Local query:** grounded, cited answer; correctly refused an unsupported comparison
+- **Global query:** synthesised the corpus's three method families
 - **Graph store:** `knowledgeforge/data/graph.db` (SQLite WAL)
-- **Embeddings store:** `knowledgeforge/data/embeddings/` (ChromaDB)
+- **Embeddings store:** `knowledgeforge/data/embeddings/` (ChromaDB) + `graphsage_w.npy` (cached learned W)
 
 ---
 
@@ -42,13 +68,16 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 ```bash
 knowledgeforge ingest --source <path>          # rule-based structural extraction
 knowledgeforge extract --source <path>         # LLM semantic triple extraction
-knowledgeforge resolve                          # 3-phase entity resolution
-knowledgeforge embed                            # GraphSAGE + turbovec embeddings
+knowledgeforge resolve                          # metaphone → jaro+cosine → Union-Find → SAME_AS
+knowledgeforge embed                            # learned GraphSAGE + turbovec embeddings
+knowledgeforge community                        # Louvain communities + LLM summaries
 knowledgeforge similar <entity>                 # fast SIMD similarity search
-knowledgeforge query "<question>"              # GraphRAG grounded answer
-knowledgeforge query x --path-only --from-entity A --to-entity B  # path find
+knowledgeforge query "<question>"              # GraphRAG local grounded answer
+knowledgeforge query "<question>" --mode global # community-summary synthesis (Edge et al. 2024)
+knowledgeforge query x --path-only --from-entity A --to-entity B  # path find (no LLM)
 knowledgeforge stats                            # graph statistics
 knowledgeforge provenance <entity>             # full provenance for entity
+knowledgeforge serve                            # REST API on localhost:8000
 ```
 
 ---
@@ -57,40 +86,20 @@ knowledgeforge provenance <entity>             # full provenance for entity
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| 2026-06-21 | Extract from redact-au, don't rebuild | Working triple extractor + CLI already exist |
+| 2026-06-21 | Extract from redact-au, don't rebuild | Working triple extractor + CLI already existed |
 | 2026-06-21 | SQLite first, pluggable interface | Protocol/ABC abstraction is the deliverable |
-| 2026-06-21 | Skip research phase | Deep domain knowledge in KG vault (447 notes) |
 | 2026-06-21 | No LangChain/LlamaIndex | Defeats "implements what research says" bar |
 | 2026-06-21 | LLM extractor added | Rule-based CONTAINS_HEADING/LINKS_TO is structural not semantic |
 | 2026-06-21 | OAuth CLI fallback for LLM calls | Jim uses Claude Code OAuth, no separate API key needed |
-| 2026-06-21 | turbovec for embedding similarity | Google TurboQuant 4-bit SIMD — not a competitor, complementary to ChromaDB |
-| 2026-06-21 | GraphSAGE MEAN aggregation | Hamilton 2017 h_v = MEAN(h_v ∪ {h_u ∀u ∈ N(v)}) |
-
----
-
-## Phase 6 — Next Actions
-
-FastAPI REST API + Docker:
-
-```
-src/knowledgeforge/api/
-  main.py       — FastAPI app, lifespan, CORS
-  routes/
-    ingest.py   — POST /ingest
-    query.py    — POST /query (GraphRAG)
-    graph.py    — GET /graph/node/{id}, GET /graph/path, GET /provenance/{id}
-    embed.py    — POST /embed, GET /similar/{entity}
-  models.py     — Pydantic request/response with provenance fields
-Dockerfile      — Python 3.12, uv, non-root user
-docker-compose.yml — app + ChromaDB named volume
-```
-
-Gate: `docker-compose up` → running API at localhost:8000  
-POST /query returns `cited_triples` array with provenance.
+| 2026-06-21 | turbovec for embedding similarity | Google TurboQuant 4-bit SIMD — complementary to ChromaDB |
+| 2026-06-21 | GraphSAGE made a **learned** aggregator | Parameter-free average did not implement Hamilton 2017; now trains `W` via the unsupervised graph loss |
+| 2026-06-21 | Entity resolution **measured**, not asserted | "Complete but unmeasured" is an overclaim; added labelled benchmark + F1 gate ≥ 0.85 |
+| 2026-06-21 | GraphRAG global mode added | Edge et al. 2024 — local k-hop alone cannot answer corpus-wide thematic questions |
+| 2026-06-21 | Security config-gated + OFF by default | Keeps dev/tests unchanged while making prod hardening real |
 
 ---
 
 ## Initialized
 
-2026-06-21 via /gsd-new-project  
-Last updated: 2026-06-21 (Phases 1-5 complete, 6-7 next)
+2026-06-21 via /gsd-new-project
+Last updated: 2026-06-21 (gap-closure build complete — all 11 P0+P1 gaps closed, docs verified to code)

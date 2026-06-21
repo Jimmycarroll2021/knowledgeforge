@@ -1,5 +1,3 @@
-import pytest
-from pathlib import Path
 from knowledgeforge.store.sqlite import SQLiteGraphStore
 from knowledgeforge.contracts import Triple
 

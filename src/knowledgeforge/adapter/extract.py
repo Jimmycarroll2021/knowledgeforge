@@ -4,8 +4,8 @@ from __future__ import annotations
 import csv
 import io
 import json
-import re
 from pathlib import Path
+from typing import Any
 
 
 def extract_text(path: Path) -> str:
@@ -134,7 +134,7 @@ def _json(path: Path) -> str:
     return "\n".join(lines)
 
 
-def _flatten_json(obj, prefix: str = "", depth: int = 0) -> str:
+def _flatten_json(obj: Any, prefix: str = "", depth: int = 0) -> str:
     if depth > 5:
         return ""
     parts: list[str] = []

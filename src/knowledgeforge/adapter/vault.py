@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..contracts import Adapter, AdapterSchema, SourceDocument, Triple, now_iso
+from ..contracts import AdapterSchema, SourceDocument, Triple, now_iso
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")

@@ -50,3 +50,20 @@ target-version = "py312"
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+# Untyped third-party libraries — no stubs / no py.typed marker. We treat their
+# import surface as Any rather than weakening strict mode elsewhere.
+[[tool.mypy.overrides]]
+module = [
+    "turbovec",
+    "turbovec.*",
+    "chromadb",
+    "chromadb.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+    "jellyfish",
+    "networkx",
+    "networkx.*",
+    "yaml",
+]
+ignore_missing_imports = true

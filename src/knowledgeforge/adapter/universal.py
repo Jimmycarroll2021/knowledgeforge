@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..contracts import Adapter, AdapterSchema, SourceDocument, Triple, now_iso
+from ..contracts import AdapterSchema, SourceDocument, Triple, now_iso
 from .extract import extract_text
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -241,10 +241,10 @@ class UniversalAdapter:
             # key: value pairs from JSON/YAML flattening
             if ": " in stripped and not stripped.startswith("-"):
                 parts = stripped.split(": ", 1)
-                key = parts[0].strip().lstrip(".")
+                flat_key = parts[0].strip().lstrip(".")
                 value = parts[1].strip()
-                if key and value and len(value) < 200:
-                    add("CONTAINS_KEY", f"{key}={value}", "key",
+                if flat_key and value and len(value) < 200:
+                    add("CONTAINS_KEY", f"{flat_key}={value}", "key",
                         stripped, 0.80)
 
         # also run text extraction to catch any narrative content

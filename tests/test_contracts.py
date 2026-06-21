@@ -1,6 +1,4 @@
 from knowledgeforge.contracts import Triple, SourceDocument, now_iso
-from pathlib import Path
-import hashlib
 
 
 def make_triple(**kwargs) -> Triple:

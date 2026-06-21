@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -75,7 +76,7 @@ def ingest(
       knowledgeforge ingest --adapter vault --source /path/to/vault
     """
     adapter_cls = _ADAPTERS[adapter]
-    adapter_kwargs: dict = {"max_facts_per_file": max_facts}
+    adapter_kwargs: dict[str, Any] = {"max_facts_per_file": max_facts}
     if include_dirs:
         adapter_kwargs["include_dirs"] = set(include_dirs)
 
@@ -94,11 +95,11 @@ def ingest(
 
     if not dry_run:
         stats = store.stats()
-        click.echo(f"\nGraph stats:")
+        click.echo("\nGraph stats:")
         click.echo(f"  entities: {stats['entities']}")
         click.echo(f"  triples:  {stats['triples']}")
         if stats["by_predicate"]:
-            click.echo(f"\n  Top predicates:")
+            click.echo("\n  Top predicates:")
             for pred, count in list(stats["by_predicate"].items())[:8]:
                 click.echo(f"    {pred:<30} {count}")
 
@@ -125,10 +126,10 @@ def stats(db: str) -> None:
     click.echo(f"\nKnowledgeForge graph — {db}")
     click.echo(f"  entities: {s['entities']}")
     click.echo(f"  triples:  {s['triples']}")
-    click.echo(f"\n  By layer:")
+    click.echo("\n  By layer:")
     for layer, count in s.get("by_layer", {}).items():
         click.echo(f"    {layer:<30} {count}")
-    click.echo(f"\n  Top predicates:")
+    click.echo("\n  Top predicates:")
     for pred, count in list(s.get("by_predicate", {}).items())[:10]:
         click.echo(f"    {pred:<30} {count}")
 
@@ -216,7 +217,7 @@ def extract(source: Path, db: str, model: str, limit: int | None, dry_run: bool)
             total_skipped += skipped
 
     store.close()
-    click.echo(f"\nLLM extraction complete:")
+    click.echo("\nLLM extraction complete:")
     click.echo(f"  files processed:  {len(docs)}")
     click.echo(f"  triples extracted:{total_triples}")
     click.echo(f"  triples added:    {total_added}")
@@ -259,6 +260,8 @@ def resolve(db: str, threshold: float) -> None:
 @click.option("--path-only", is_flag=True, help="Find graph paths only — no LLM call.")
 @click.option("--from-entity", default=None, help="Path mode: start entity.")
 @click.option("--to-entity", default=None, help="Path mode: end entity.")
+@click.option("--mode", default="local", type=click.Choice(["local", "global"]), show_default=True,
+              help="local=k-hop BFS; global=community summaries (Edge et al. 2024).")
 def query(
     question: str,
     db: str,
@@ -267,6 +270,7 @@ def query(
     path_only: bool,
     from_entity: str | None,
     to_entity: str | None,
+    mode: str,
 ) -> None:
     """Query the graph using GraphRAG — graph-aware retrieval + LLM answer.
 
@@ -305,7 +309,7 @@ def query(
     click.echo(f"\nGraphRAG query ({hops}-hop, model={model})")
     click.echo(f"  question: {question}\n")
 
-    result = rag.ask(question)
+    result = rag.ask(question, mode=mode)
     store.close()
 
     click.echo(f"Anchor entities: {', '.join(result['anchor_entities'][:5]) or 'none'}")
@@ -362,6 +366,38 @@ def embed(db: str, embeddings: str, model: str, batch_size: int) -> None:
     click.echo(f"  entities embedded: {result['entities_embedded']}")
     click.echo(f"  already cached:    {result['skipped']}")
     click.echo(f"  model:             {result['model']}")
+
+
+@cli.command()
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True)
+@click.option("--model", default="claude-haiku-4-5-20251001", show_default=True)
+@click.option("--min-size", default=3, show_default=True,
+              help="Minimum community size (entities). Smaller communities are dropped.")
+def community(db: str, model: str, min_size: int) -> None:
+    """Build community graph + LLM summaries for global GraphRAG mode.
+
+    Implements Edge et al. 2024: Louvain community detection over semantic
+    triples → LLM summary per community → enables 'query --mode global'.
+
+    \b
+    Run after: knowledgeforge embed
+    Then use:  knowledgeforge query "what are the main themes?" --mode global
+    """
+    store = SQLiteGraphStore(Path(db))
+    from ..community.detector import CommunityDetector
+    detector = CommunityDetector(store, model=model, min_community_size=min_size)
+
+    click.echo("\nCommunity detection (Louvain) + LLM summarisation")
+    click.echo(f"  graph: {db}  model: {model}  min-size: {min_size}\n")
+
+    result = detector.detect_and_summarise()
+    store.close()
+
+    click.echo(f"  graph nodes:           {result.get('total_graph_nodes', 0)}")
+    click.echo(f"  communities found:     {result['communities_found']}")
+    click.echo(f"  communities summarised:{result['communities_summarised']}")
+    click.echo(f"  entities covered:      {result['entities_covered']}")
+    click.echo("\nDone. Run: knowledgeforge query \"<question>\" --mode global")
 
 
 @cli.command()
