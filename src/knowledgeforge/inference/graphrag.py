@@ -94,9 +94,20 @@ class GraphRAG:
 
     # ── retrieval ─────────────────────────────────────────────────────────────
 
+    _STOPWORDS = {
+        "what", "that", "this", "with", "from", "have", "been", "does",
+        "into", "when", "where", "which", "they", "them", "their", "will",
+        "would", "could", "should", "between", "about", "using", "used",
+        "how", "the", "and", "for", "are", "was", "how", "building",
+        "relationship", "connect", "connection",
+    }
+
     def _find_anchors(self, question: str) -> list[str]:
         """Find entity IDs that match terms in the question."""
-        terms = [w for w in question.lower().split() if len(w) > 3]
+        terms = [
+            w for w in question.lower().split()
+            if len(w) > 3 and w not in self._STOPWORDS
+        ]
         anchors: list[str] = []
         seen: set[str] = set()
 
