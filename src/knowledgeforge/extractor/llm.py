@@ -23,8 +23,9 @@ from pathlib import Path
 from ..contracts import SourceDocument, Triple, now_iso
 
 _HEADING_SPLIT_RE = re.compile(r"^#{1,3}\s+.+$", re.MULTILINE)
-_CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
-_MIN_SECTION_CHARS = 80
+_CODE_FENCE_RE = re.compile(r"^```[^\n]*\n?", re.MULTILINE)  # strip fences only, keep content
+_FRONTMATTER_RE = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
+_MIN_SECTION_CHARS = 60
 
 # Predicates aligned with the KnowledgeForge ontology (from vault notes)
 _PREDICATE_GUIDANCE = """
@@ -154,12 +155,18 @@ class LLMExtractor:
     # ── private ───────────────────────────────────────────────────────────────
 
     def _split_sections(self, text: str) -> list[str]:
-        text = _CODE_BLOCK_RE.sub("", text)
+        # Strip YAML frontmatter, then strip just code fences (keep equation content)
+        text = _FRONTMATTER_RE.sub("", text)
+        text = _CODE_FENCE_RE.sub("", text)
         boundaries = [m.start() for m in _HEADING_SPLIT_RE.finditer(text)]
         if not boundaries:
-            return [text] if len(text) >= _MIN_SECTION_CHARS else []
+            return [text.strip()] if len(text.strip()) >= _MIN_SECTION_CHARS else []
 
         sections: list[str] = []
+        # include content before first heading (intro/abstract section)
+        intro = text[: boundaries[0]].strip()
+        if len(intro) >= _MIN_SECTION_CHARS:
+            sections.append(intro)
         for i, start in enumerate(boundaries):
             end = boundaries[i + 1] if i + 1 < len(boundaries) else len(text)
             section = text[start:end].strip()
