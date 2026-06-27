@@ -14,6 +14,7 @@ Implements BOTH modes from Edge et al. 2024 (arXiv:2404.16130):
 Edge et al. 2024: "local retrieval is insufficient for questions that require
 understanding the dataset as a whole."
 """
+
 from __future__ import annotations
 
 import os
@@ -44,12 +45,17 @@ def _claude_cli(prompt: str, system: str, model: str) -> str:
     full = f"<system>\n{system}\n</system>\n\n{prompt}"
     r = subprocess.run(
         ["claude", "-p", "--model", model, "-"],
-        input=full, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=120,
+        input=full,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
     )
     if r.returncode != 0:
         raise RuntimeError(f"claude CLI failed: {r.stderr[:200]}")
     return r.stdout.strip()
+
 
 _SYSTEM_PROMPT = """You are a knowledge graph assistant. Answer questions using ONLY the provided graph facts.
 
@@ -101,11 +107,15 @@ class GraphRAG:
 
         mode="local"  — k-hop BFS from anchor entities (default)
         mode="global" — community summary search (Edge et al. 2024 global mode)
+        mode="drift"  — DRIFT: community themes + local entity retrieval fused
+                        (Microsoft GraphRAG global→local drill-down)
 
         Returns: {answer, evidence, subgraph_size, anchor_entities, mode}
         """
         if mode == "global":
             return self._ask_global(question)
+        if mode == "drift":
+            return self._ask_drift(question)
         anchors = self._find_anchors(question)
         subgraph = self._expand_subgraph(anchors, self._hops)
 
@@ -147,6 +157,7 @@ Rules:
         k-hop local neighbourhoods. Answers thematic/holistic questions.
         """
         from ..community.detector import CommunityDetector
+
         detector = CommunityDetector(self._store, model=self._model)
         summaries = detector.load_summaries()
 
@@ -215,20 +226,134 @@ Rules:
 
     def _clean_terms(self, text: str) -> list[str]:
         import re as _re
+
         return [
             _re.sub(r"[^\w]", "", w)
             for w in text.lower().split()
             if len(w) > 3 and w not in self._STOPWORDS
         ]
 
+    # ── drift mode (Microsoft GraphRAG global→local) ──────────────────────────
+
+    _DRIFT_SYSTEM = """You are a knowledge graph analyst answering with DRIFT search:
+you are given both (a) thematic community summaries that frame the graph's broad
+structure and (b) specific cited triples retrieved from the local neighbourhood.
+
+Rules:
+- Use the community themes for breadth and orientation
+- Ground specific claims in the cited triples — cite them as [Subject -> Predicate -> Object]
+- Prefer the specific triples over the themes when they conflict
+- If neither themes nor triples support an answer, say exactly: "The graph does not contain evidence for this."
+- Be precise and concise
+"""
+
+    def _ask_drift(self, question: str) -> dict[str, Any]:
+        """DRIFT mode (Microsoft GraphRAG): blend global community context with
+        local entity retrieval.
+
+        Ranks community summaries for thematic breadth, then seeds local k-hop
+        expansion from both the question's anchors AND entities drawn from the
+        top communities (global -> local drill-down), and synthesises one
+        grounded answer over the combined context.
+        """
+        from ..community.detector import CommunityDetector
+
+        detector = CommunityDetector(self._store, model=self._model)
+        summaries = detector.load_summaries()
+        top_communities = self._rank_communities(question, summaries) if summaries else []
+
+        # Local anchors from the question, enriched with members of the top
+        # communities so the answer drills from theme into specific entities.
+        anchors = self._find_anchors(question)
+        drift_anchors = list(anchors)
+        seen = set(anchors)
+        for s in top_communities[:3]:
+            for eid in self._community_member_ids(s["community_id"], limit=10):
+                if eid not in seen:
+                    seen.add(eid)
+                    drift_anchors.append(eid)
+
+        subgraph = self._expand_subgraph(drift_anchors[:30], self._hops)
+        facts = self._serialise(subgraph) if subgraph else ""
+
+        theme_ctx = "\n\n".join(
+            f"[Theme {s['community_id']} — {s['member_count']} entities]\n{s['summary']}"
+            for s in top_communities[:5]
+        )
+
+        if not facts and not theme_ctx:
+            return {
+                "answer": "No relevant communities or entities found in the graph for this question.",
+                "mode": "drift",
+                "evidence": [],
+                "subgraph_size": 0,
+                "anchor_entities": anchors,
+                "communities_used": 0,
+            }
+
+        context = (
+            f"Community themes:\n{theme_ctx or '(none)'}\n\n"
+            f"Specific graph facts:\n{facts or '(none)'}"
+        )
+        answer = self._call_llm(question, context, system=self._DRIFT_SYSTEM)
+
+        return {
+            "answer": answer,
+            "mode": "drift",
+            "evidence": subgraph[:50],
+            "subgraph_size": len(subgraph),
+            "anchor_entities": anchors,
+            "communities_used": len(top_communities),
+        }
+
+    def _community_member_ids(self, community_id: str, limit: int = 10) -> list[str]:
+        """Entity ids belonging to a community (empty if the table is absent)."""
+        try:
+            rows = self._store._conn.execute(
+                "SELECT entity_id FROM community_members WHERE community_id=? LIMIT ?",
+                (community_id, limit),
+            ).fetchall()
+            return [r[0] for r in rows]
+        except Exception:
+            return []
+
     # ── retrieval ─────────────────────────────────────────────────────────────
 
     _STOPWORDS = {
-        "what", "that", "this", "with", "from", "have", "been", "does",
-        "into", "when", "where", "which", "they", "them", "their", "will",
-        "would", "could", "should", "between", "about", "using", "used",
-        "how", "the", "and", "for", "are", "was", "how", "building",
-        "relationship", "connect", "connection",
+        "what",
+        "that",
+        "this",
+        "with",
+        "from",
+        "have",
+        "been",
+        "does",
+        "into",
+        "when",
+        "where",
+        "which",
+        "they",
+        "them",
+        "their",
+        "will",
+        "would",
+        "could",
+        "should",
+        "between",
+        "about",
+        "using",
+        "used",
+        "how",
+        "the",
+        "and",
+        "for",
+        "are",
+        "was",
+        "how",
+        "building",
+        "relationship",
+        "connect",
+        "connection",
     }
 
     def _find_anchors(self, question: str) -> list[str]:
@@ -242,6 +367,7 @@ Rules:
         confined to the trusted layers (llm_hypotheses excluded).
         """
         import re as _re
+
         anchors: list[str] = []
         seen: set[str] = set()
 
@@ -260,10 +386,7 @@ Rules:
                 pass  # degrade to LIKE fallback if embedding search unavailable
 
         # ── substring-LIKE fallback (UNION with semantic anchors) ─────────────
-        terms = [
-            _re.sub(r"[^\w]", "", w)
-            for w in question.lower().split()
-        ]
+        terms = [_re.sub(r"[^\w]", "", w) for w in question.lower().split()]
         terms = [w for w in terms if len(w) > 3 and w not in self._STOPWORDS]
 
         layer_clause = self._layer_in_clause("layer")
@@ -340,11 +463,22 @@ Rules:
                 if tid in seen_triples:
                     continue
                 seen_triples.add(tid)
-                t = dict(zip(
-                    ["triple_id", "subject", "predicate", "object",
-                     "source_kind", "target_kind", "confidence", "evidence", "source_doc"],
-                    row,
-                ))
+                t = dict(
+                    zip(
+                        [
+                            "triple_id",
+                            "subject",
+                            "predicate",
+                            "object",
+                            "source_kind",
+                            "target_kind",
+                            "confidence",
+                            "evidence",
+                            "source_doc",
+                        ],
+                        row,
+                    )
+                )
                 subgraph.append(t)
 
                 if depth < hops:
@@ -368,8 +502,9 @@ Rules:
             conf = f" [conf={t['confidence']:.2f}]" if t["confidence"] < 0.9 else ""
             lines.append(
                 f"({t['subject']})-[{t['predicate']}]->({t['object']}){conf}"
-                f"  // {t['evidence'][:80]}" if t.get("evidence") else
-                f"({t['subject']})-[{t['predicate']}]->({t['object']}){conf}"
+                f"  // {t['evidence'][:80]}"
+                if t.get("evidence")
+                else f"({t['subject']})-[{t['predicate']}]->({t['object']}){conf}"
             )
         return "\n".join(lines)
 
@@ -394,6 +529,7 @@ Rules:
     def _get_client(self) -> anthropic.Anthropic:
         if self._client is None:
             import anthropic
+
             self._client = anthropic.Anthropic(api_key=self._api_key)
         return self._client
 

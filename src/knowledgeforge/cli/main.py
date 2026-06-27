@@ -1,4 +1,5 @@
 """knowledgeforge CLI — ingest raw data, query the graph."""
+
 from __future__ import annotations
 
 import json
@@ -31,6 +32,7 @@ def _load_env() -> None:
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.strip())
 
+
 _ADAPTERS = {
     "vault": VaultAdapter,
     "universal": UniversalAdapter,
@@ -45,20 +47,31 @@ def cli() -> None:
 
 
 @cli.command()
-@click.option("--adapter", "-a", default="universal",
-              type=click.Choice(list(_ADAPTERS)), show_default=True,
-              help="Adapter to use. 'universal' handles any file type.")
-@click.option("--source", "-s", required=True,
-              type=click.Path(exists=True, path_type=Path),
-              help="Path to your raw data — any file or directory.")
-@click.option("--db", default=str(_DEFAULT_DB), show_default=True,
-              help="SQLite graph store path.")
-@click.option("--include-dirs", multiple=True,
-              help="Only ingest these top-level directories (vault adapter). Repeat for multiple.")
-@click.option("--dry-run", is_flag=True,
-              help="Scan without writing — shows what would be ingested.")
-@click.option("--max-facts", default=40, show_default=True,
-              help="Max triples extracted per file.")
+@click.option(
+    "--adapter",
+    "-a",
+    default="universal",
+    type=click.Choice(list(_ADAPTERS)),
+    show_default=True,
+    help="Adapter to use. 'universal' handles any file type.",
+)
+@click.option(
+    "--source",
+    "-s",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to your raw data — any file or directory.",
+)
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True, help="SQLite graph store path.")
+@click.option(
+    "--include-dirs",
+    multiple=True,
+    help="Only ingest these top-level directories (vault adapter). Repeat for multiple.",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Scan without writing — shows what would be ingested."
+)
+@click.option("--max-facts", default=40, show_default=True, help="Max triples extracted per file.")
 def ingest(
     adapter: str,
     source: Path,
@@ -110,8 +123,7 @@ def ingest(
 
 
 @cli.command()
-@click.option("--db", default=str(_DEFAULT_DB), show_default=True,
-              help="SQLite graph store path.")
+@click.option("--db", default=str(_DEFAULT_DB), show_default=True, help="SQLite graph store path.")
 def stats(db: str) -> None:
     """Show graph store statistics."""
     db_path = Path(db)
@@ -160,14 +172,21 @@ def provenance(subject: str, db: str, fmt: str) -> None:
 
 
 @cli.command()
-@click.option("--source", "-s", required=True,
-              type=click.Path(exists=True, path_type=Path),
-              help="Source directory or file to extract triples from.")
+@click.option(
+    "--source",
+    "-s",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Source directory or file to extract triples from.",
+)
 @click.option("--db", default=str(_DEFAULT_DB), show_default=True)
-@click.option("--model", default="claude-haiku-4-5-20251001", show_default=True,
-              help="Claude model for extraction.")
-@click.option("--limit", default=None, type=int,
-              help="Max files to process (useful for testing).")
+@click.option(
+    "--model",
+    default="claude-haiku-4-5-20251001",
+    show_default=True,
+    help="Claude model for extraction.",
+)
+@click.option("--limit", default=None, type=int, help="Max files to process (useful for testing).")
 @click.option("--dry-run", is_flag=True, help="Show what would be extracted, don't write.")
 def extract(source: Path, db: str, model: str, limit: int | None, dry_run: bool) -> None:
     """Run LLM semantic triple extraction on SOURCE.
@@ -226,8 +245,12 @@ def extract(source: Path, db: str, model: str, limit: int | None, dry_run: bool)
 
 @cli.command()
 @click.option("--db", default=str(_DEFAULT_DB), show_default=True)
-@click.option("--threshold", default=0.85, show_default=True,
-              help="Jaro-Winkler similarity threshold for Phase 2 match.")
+@click.option(
+    "--threshold",
+    default=0.85,
+    show_default=True,
+    help="Jaro-Winkler similarity threshold for Phase 2 match.",
+)
 def resolve(db: str, threshold: float) -> None:
     """Run entity resolution — 3-phase pipeline from the vault spec.
 
@@ -239,6 +262,7 @@ def resolve(db: str, threshold: float) -> None:
     """
     store = SQLiteGraphStore(Path(db))
     from ..resolution.resolver import EntityResolver
+
     resolver = EntityResolver(store, threshold=threshold)
 
     click.echo(f"\nEntity resolution (threshold={threshold})")
@@ -254,14 +278,19 @@ def resolve(db: str, threshold: float) -> None:
 @cli.command()
 @click.argument("question")
 @click.option("--db", default=str(_DEFAULT_DB), show_default=True)
-@click.option("--hops", default=2, show_default=True,
-              help="k-hop neighbourhood expansion depth.")
+@click.option("--hops", default=2, show_default=True, help="k-hop neighbourhood expansion depth.")
 @click.option("--model", default="claude-haiku-4-5-20251001", show_default=True)
 @click.option("--path-only", is_flag=True, help="Find graph paths only — no LLM call.")
 @click.option("--from-entity", default=None, help="Path mode: start entity.")
 @click.option("--to-entity", default=None, help="Path mode: end entity.")
-@click.option("--mode", default="local", type=click.Choice(["local", "global"]), show_default=True,
-              help="local=k-hop BFS; global=community summaries (Edge et al. 2024).")
+@click.option(
+    "--mode",
+    default="local",
+    type=click.Choice(["local", "global", "drift"]),
+    show_default=True,
+    help="local=k-hop BFS; global=community summaries (Edge et al. 2024); "
+    "drift=community themes + local retrieval fused (Microsoft GraphRAG).",
+)
 def query(
     question: str,
     db: str,
@@ -323,17 +352,27 @@ def query(
         shown = 0
         for t in result["evidence"]:
             if t["predicate"] not in skip and shown < 5:
-                click.echo(f"  ({t['subject']})-[{t['predicate']}]->({t['object']})"
-                           f"  [conf={t['confidence']:.2f}]")
+                click.echo(
+                    f"  ({t['subject']})-[{t['predicate']}]->({t['object']})"
+                    f"  [conf={t['confidence']:.2f}]"
+                )
                 shown += 1
 
 
 @cli.command()
 @click.option("--db", default=str(_DEFAULT_DB), show_default=True)
-@click.option("--embeddings", default="data/embeddings", show_default=True,
-              help="ChromaDB embeddings store path.")
-@click.option("--model", default="all-MiniLM-L6-v2", show_default=True,
-              help="Sentence-transformer model for semantic embeddings.")
+@click.option(
+    "--embeddings",
+    default="data/embeddings",
+    show_default=True,
+    help="ChromaDB embeddings store path.",
+)
+@click.option(
+    "--model",
+    default="all-MiniLM-L6-v2",
+    show_default=True,
+    help="Sentence-transformer model for semantic embeddings.",
+)
 @click.option("--batch-size", default=64, show_default=True)
 def embed(db: str, embeddings: str, model: str, batch_size: int) -> None:
     """Build entity embeddings — semantic + GraphSAGE-style structural aggregation.
@@ -371,8 +410,12 @@ def embed(db: str, embeddings: str, model: str, batch_size: int) -> None:
 @cli.command()
 @click.option("--db", default=str(_DEFAULT_DB), show_default=True)
 @click.option("--model", default="claude-haiku-4-5-20251001", show_default=True)
-@click.option("--min-size", default=3, show_default=True,
-              help="Minimum community size (entities). Smaller communities are dropped.")
+@click.option(
+    "--min-size",
+    default=3,
+    show_default=True,
+    help="Minimum community size (entities). Smaller communities are dropped.",
+)
 def community(db: str, model: str, min_size: int) -> None:
     """Build community graph + LLM summaries for global GraphRAG mode.
 
@@ -385,6 +428,7 @@ def community(db: str, model: str, min_size: int) -> None:
     """
     store = SQLiteGraphStore(Path(db))
     from ..community.detector import CommunityDetector
+
     detector = CommunityDetector(store, model=model, min_community_size=min_size)
 
     click.echo("\nCommunity detection (Louvain) + LLM summarisation")
@@ -397,7 +441,7 @@ def community(db: str, model: str, min_size: int) -> None:
     click.echo(f"  communities found:     {result['communities_found']}")
     click.echo(f"  communities summarised:{result['communities_summarised']}")
     click.echo(f"  entities covered:      {result['entities_covered']}")
-    click.echo("\nDone. Run: knowledgeforge query \"<question>\" --mode global")
+    click.echo('\nDone. Run: knowledgeforge query "<question>" --mode global')
 
 
 @cli.command()
@@ -416,6 +460,7 @@ def serve(host: str, port: int, db: str, embeddings: str, reload: bool) -> None:
       knowledgeforge serve --reload
     """
     import uvicorn
+
     os.environ.setdefault("KF_DB_PATH", db)
     os.environ.setdefault("KF_EMBEDDINGS_PATH", embeddings)
     uvicorn.run(
@@ -432,7 +477,9 @@ def serve(host: str, port: int, db: str, embeddings: str, reload: bool) -> None:
 @click.option("--embeddings", default="data/embeddings", show_default=True)
 @click.option("-k", default=10, show_default=True, help="Number of results.")
 @click.option("--kind", default=None, help="Filter by entity kind (Algorithm, Concept, etc.)")
-@click.option("--text", is_flag=True, help="Treat ENTITY as a free-text query instead of entity ID.")
+@click.option(
+    "--text", is_flag=True, help="Treat ENTITY as a free-text query instead of entity ID."
+)
 def similar(entity: str, db: str, embeddings: str, k: int, kind: str | None, text: bool) -> None:
     """Find entities similar to ENTITY using semantic + structural embeddings.
 

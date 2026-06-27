@@ -60,11 +60,11 @@ Raw unstructured data in → validated, queryable, provenance-backed knowledge g
 ## Constraints
 
 - **Stack:** Python, uv (not pip), `.venv/Scripts/python.exe` on Windows
-- **Graph store:** SQLite for dev, pluggable interface for prod
+- **Graph store:** SQLite (concrete `SQLiteGraphStore`). A pluggable backend is a *goal*, not yet built — extracting a `GraphStore` Protocol is the documented prerequisite for the deferred Neo4j/GDS tier (see Roadmap).
 - **Vectors:** ChromaDB (already live in mempalace)
 - **LLM:** Anthropic SDK (Claude API) for inference layer
 - **Standards:** RDF triple model, SHACL validation, PROV-O provenance — non-negotiable
-- **No vendor lock-in:** Every layer behind a Protocol/ABC
+- **No vendor lock-in (partial):** the **Adapter** layer is behind a Protocol (VaultAdapter/UniversalAdapter). The graph store is *not* yet behind a Protocol — it is the concrete `SQLiteGraphStore`, and several consumers read its `_conn` directly; promoting those to a typed `GraphStore` Protocol is the prerequisite for an alternative backend.
 - **Machine:** jimbot — Windows 11 Pro, Git Bash shell
 
 ## Key Decisions
@@ -72,7 +72,7 @@ Raw unstructured data in → validated, queryable, provenance-backed knowledge g
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Extract from redact-au, don't rebuild | Working triple extractor + CLI already exist | — Pending |
-| SQLite first, pluggable second | Dev speed; the interface matters more than the backend | — Pending |
+| SQLite first, pluggable second | Dev speed; the interface matters more than the backend | SQLite shipped (`SQLiteGraphStore`); the pluggable `GraphStore` Protocol is NOT yet extracted — deferred until the Neo4j tier is justified by scale |
 | ChromaDB for vectors | Already live with 37,837 embeddings in mempalace | — Pending |
 | Anthropic SDK for LLM | Jim's primary stack; Claude API available | — Pending |
 | SHACL over application-layer validation | Standards-aligned; validates graph shape not just data | — Pending |

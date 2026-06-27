@@ -1,4 +1,5 @@
 """Pydantic request/response models — provenance on every response."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -41,8 +42,9 @@ class QueryRequest(BaseModel):
     model: str = "claude-haiku-4-5-20251001"
     mode: str = Field(
         "local",
-        pattern="^(local|global)$",
-        description="local = k-hop subgraph retrieval; global = community-summary synthesis, Edge et al. 2024",
+        pattern="^(local|global|drift)$",
+        description="local = k-hop subgraph retrieval; global = community-summary synthesis (Edge et al. 2024); "
+        "drift = community themes + local retrieval fused (Microsoft GraphRAG)",
     )
 
 

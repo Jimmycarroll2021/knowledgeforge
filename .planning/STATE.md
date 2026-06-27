@@ -21,14 +21,22 @@ claims TRUE in the code. Every item below is verified against source, not assert
 | 3 | Provenance fields not full PROV-O | `source` (producing agent), `lineage`, `valid_from`/`valid_to`, `schema_version` on every triple; resolver SAME_AS edges carry `source=EntityResolver` | `contracts.py`, `resolution/resolver.py` |
 | 4 | "Validation" was predicate-set membership only | SHACL-style `PropertyShape` (cardinality/target-class/datatype/severity); severity ladder with opt-in `strict` mode (default soft) | `contracts.py`, `pipeline.py` `_validate` |
 | 5 | Layers not real named graphs | `layer` is part of triple identity + CHECK constraint; `purge_layer` + recursive-CTE `neighbourhood`; vault separated 1068 source_facts + 73 inferred_relations | `store/sqlite.py` |
-| 6 | GraphRAG local only | Local k-hop with semantic anchors + trusted-layer filter (excludes `llm_hypotheses`); **global** mode via Louvain communities + LLM summaries + map-reduce; reachable over HTTP via `mode` field | `inference/graphrag.py`, `community/detector.py` |
+| 6 | GraphRAG local only | Local k-hop with semantic anchors + trusted-layer filter (excludes `llm_hypotheses`); **global** mode via hierarchical-Leiden communities + LLM summaries + map-reduce; **drift** mode (themes + local retrieval); reachable over HTTP via `mode` field | `inference/graphrag.py`, `community/detector.py` |
 | 7 | API surface incomplete | `/health /ingest /query /embed /similar /graph/stats /graph/node /graph/path /graph/provenance /graph/community /graph/resolve` | `api/routes/*` |
 | 8 | No security/observability | Config-gated API-key auth (`KF_API_KEY`), rate limiting (`KF_RATE_LIMIT`), structured JSON request logging + `X-Request-ID` | `api/security.py` |
 
-Deferred (NOT yet built — single-machine scope): Neo4j/GDS backend tier, Leiden + hierarchical
-communities, TransE relation-as-first-class-vector scorer, inductive new-node embedding path,
-pluggable adapter registry. Per-build N×N GraphSAGE matrix and O(n²) blocking are fine for
+Deferred (NOT yet built — single-machine scope): Neo4j/GDS backend tier, **level-aware global
+search** over the community hierarchy (+ MRR@10 measurement), TransE relation-as-first-class-vector
+scorer, inductive new-node embedding path, pluggable adapter registry, and a pluggable `GraphStore`
+Protocol (the prerequisite for the Neo4j tier — the store is currently the concrete
+`SQLiteGraphStore`). Per-build N×N GraphSAGE matrix and O(n²) blocking are fine for
 hundreds–low-thousands of entities, not millions.
+
+**v2 (2026-06-27) — Hierarchical GraphRAG spike:** community detection upgraded from flat Louvain
+to **hierarchical Leiden** (leidenalg, seeded/deterministic; `level` + `parent_community_id` on every
+community, coarse level 0 → finer children, Louvain fallback retained) and a new **DRIFT** query mode
+(`query --mode drift`) fuses community themes with local entity retrieval. 61 tests green; mypy --strict
+clean. Remaining: make global search level-aware and measure it (MRR@10).
 
 ---
 
@@ -70,10 +78,11 @@ knowledgeforge ingest --source <path>          # rule-based structural extractio
 knowledgeforge extract --source <path>         # LLM semantic triple extraction
 knowledgeforge resolve                          # metaphone → jaro+cosine → Union-Find → SAME_AS
 knowledgeforge embed                            # learned GraphSAGE + turbovec embeddings
-knowledgeforge community                        # Louvain communities + LLM summaries
+knowledgeforge community                        # hierarchical Leiden communities + LLM summaries
 knowledgeforge similar <entity>                 # fast SIMD similarity search
 knowledgeforge query "<question>"              # GraphRAG local grounded answer
 knowledgeforge query "<question>" --mode global # community-summary synthesis (Edge et al. 2024)
+knowledgeforge query "<question>" --mode drift  # DRIFT: community themes + local retrieval fused
 knowledgeforge query x --path-only --from-entity A --to-entity B  # path find (no LLM)
 knowledgeforge stats                            # graph statistics
 knowledgeforge provenance <entity>             # full provenance for entity
@@ -87,7 +96,7 @@ knowledgeforge serve                            # REST API on localhost:8000
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-06-21 | Extract from redact-au, don't rebuild | Working triple extractor + CLI already existed |
-| 2026-06-21 | SQLite first, pluggable interface | Protocol/ABC abstraction is the deliverable |
+| 2026-06-21 | SQLite first, pluggable interface | SQLite shipped as concrete `SQLiteGraphStore`; the pluggable `GraphStore` Protocol/ABC is NOT yet extracted (deferred prerequisite for the Neo4j tier) — the **Adapter** layer is the Protocol that shipped |
 | 2026-06-21 | No LangChain/LlamaIndex | Defeats "implements what research says" bar |
 | 2026-06-21 | LLM extractor added | Rule-based CONTAINS_HEADING/LINKS_TO is structural not semantic |
 | 2026-06-21 | OAuth CLI fallback for LLM calls | Jim uses Claude Code OAuth, no separate API key needed |

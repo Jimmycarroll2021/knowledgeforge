@@ -22,6 +22,8 @@ dependencies = [
     "jellyfish>=1.2.1",
     "python-dotenv>=1.2.2",
     "turbovec>=0.8.0",
+    "leidenalg>=0.12.0",
+    "igraph>=1.0.0",
 ]
 
 [project.scripts]
@@ -64,6 +66,8 @@ module = [
     "jellyfish",
     "networkx",
     "networkx.*",
+    "igraph",
+    "leidenalg",
     "yaml",
 ]
 ignore_missing_imports = true
