@@ -50,7 +50,7 @@ Raw files (any format)
     ↓
 [Graph Store]        ← SQLite WAL, named layers: source_facts / normalised / inferred / llm_hypotheses
     ↓
-[Communities]        ← Louvain detection + LLM community summaries (cached)
+[Communities]        ← hierarchical Leiden detection (Louvain fallback) + LLM community summaries (cached)
     ↓
 [GraphRAG]           ← local k-hop (trusted-layer grounding) + global community synthesis
     ↓
@@ -70,7 +70,7 @@ Run end-to-end against a 73-document graph-ML research vault (this is the actual
 | Ingest + extract | **1,141 triples / 511 entities** (source_facts + inferred layers, cleanly separated) |
 | Resolve | **73 `SAME_AS` aliases** written to the `inferred_relations` layer (originals preserved) |
 | Embed | learned-GraphSAGE embedding of all **511 entities in ~25s** (single machine, numpy) |
-| Community | **16 communities** detected (Louvain) and LLM-summarised |
+| Community | **16 communities** detected (Louvain at the time; current default is hierarchical Leiden) and LLM-summarised |
 | Query (local) | grounded, cited answer; **correctly refused** to hallucinate an unsupported comparison |
 | Query (global) | synthesised the corpus's **three method families** from community summaries |
 
@@ -80,15 +80,15 @@ Entity-resolution quality is **measured**, not asserted — see the next section
 
 ## Entity resolution — measured, not claimed
 
-Earlier versions marked entity resolution "complete" with no measurement. That is corrected. Resolution is now evaluated against a hand-labelled benchmark of graph-ML entity ids (`tests/fixtures/er_labelled_pairs.json` — 25 true surface variants + 24 confusable negatives such as GraphSAGE/GraphSAINT and TransE/TransR):
+Earlier versions marked entity resolution "complete" with no measurement. That is corrected. Resolution is now evaluated against a hand-labelled benchmark of graph-ML entity ids (`tests/fixtures/er_labelled_pairs.json` — 25 true surface variants + 25 confusable negatives such as GraphSAGE/GraphSAINT and TransE/TransR):
 
 - **F1 = 1.00 on the benchmark** (`tests/test_resolution_eval.py`, gate ≥ 0.85, red by design if it regresses)
-- **Generalisation:** a held-out generalisation set is **not yet in CI** — only the 49-pair benchmark above is measured and gated. (An informal probe on novel terms looked strong, but it is not a CI-backed number.)
+- **Generalisation:** a held-out generalisation set is **not yet in CI** — only the 50-pair benchmark above is measured and gated. (An informal probe on novel terms looked strong, but it is not a CI-backed number.)
 
 How it works (`src/knowledgeforge/resolution/resolver.py`):
 
 1. **Phase 1 — exact normalised match** within a kind (case / punctuation / spacing only).
-2. **Phase 2 — blocked similarity**: metaphone + prefix blocking generates candidates; an initialism rule (e.g. `GNN` ⇄ `Graph Neural Network`) auto-merges deterministically; otherwise a pair must clear a combined `jaro·0.6 + cosine·0.4` score **and** a **0.90 cosine semantic floor**. Borderline pairs land in a *flag band* (recorded, never silently merged).
+2. **Phase 2 — blocked similarity**: metaphone + prefix blocking generates candidates; an initialism rule (e.g. `GNN` ⇄ `Graph Neural Network`) auto-merges deterministically; otherwise a pair must clear a combined `jaro·0.6 + cosine·0.4` score **and** a **0.90 cosine semantic floor**. Borderline pairs land in a *flag band* (recorded, never silently merged). (The `jaro·0.6 + cosine·0.4` cosine stage needs embeddings — run `knowledgeforge embed` first, or use the API/eval path which inject them; the bare `resolve` CLI without embeddings is string-only.)
 3. **Phase 3 — structural WCC** over `SIMILAR_TO` edges.
 
 All merges feed one path-compressed **Union-Find** so transitive duplicates collapse to a single canonical root. Every merge writes a `SAME_AS` edge to the `inferred_relations` layer carrying `source=EntityResolver` provenance. Originals are never deleted.
@@ -288,7 +288,7 @@ Every layer implements what the primary literature specifies — not a wrapper a
 | Entity Resolution | Winkler 1990; Union-Find WCC | metaphone blocking, jaro+cosine, 0.90 semantic floor, transitive Union-Find — **measured F1 = 1.00** |
 | Node Embeddings | Hamilton et al. 2017 — GraphSAGE (NeurIPS) | **learned** unsupervised aggregator `z = L2(ReLU(W·CONCAT(self, mean_nbrs)))`, graph loss + negative sampling, hand-derived backprop |
 | Similarity Search | Google TurboQuant (2024) | 4-bit SIMD quantised ANN via turbovec |
-| Communities | Edge et al. 2024 — arXiv:2404.16130 | Louvain detection + LLM community summaries |
+| Communities | Edge et al. 2024 — arXiv:2404.16130 | hierarchical Leiden detection + LLM community summaries |
 | Graph Retrieval | Edge et al. 2024 — arXiv:2404.16130 | local k-hop (trusted-layer grounding) + global community-summary synthesis (rank top-K → single grounded synthesis; true map-reduce is roadmap) + DRIFT-style fusion |
 | GNN Theory | Battaglia et al. 2018 — arXiv:1806.01261 | triple-as-unit + adapter-as-generalisation inductive bias |
 

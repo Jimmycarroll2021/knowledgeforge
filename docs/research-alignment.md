@@ -85,11 +85,11 @@ always admit-and-flag. This is real shape validation, not predicate-set membersh
 > Correction: earlier docs marked resolution "complete" with **no measurement**. It is now measured.
 
 The resolver (`resolution/resolver.py`) is evaluated against a hand-labelled benchmark
-(`tests/fixtures/er_labelled_pairs.json`: 25 true surface variants + 24 confusable negatives such as
+(`tests/fixtures/er_labelled_pairs.json`: 25 true surface variants + 25 confusable negatives such as
 GraphSAGE/GraphSAINT, TransE/TransR, GCN/R-GCN):
 
 - **F1 = 1.00 on the benchmark** (`tests/test_resolution_eval.py`, gate ≥ 0.85 — red by design on regression)
-- **Generalisation:** not yet measured in CI — only the 49-pair benchmark is gated (F1 = 1.00, gate ≥ 0.85). A held-out generalisation set is roadmap.
+- **Generalisation:** not yet measured in CI — only the 50-pair benchmark is gated (F1 = 1.00, gate ≥ 0.85). A held-out generalisation set is roadmap.
 
 Pipeline:
 
@@ -97,7 +97,7 @@ Pipeline:
 2. **Phase 2 — blocked similarity.** Candidate pairs come from metaphone + prefix blocking (not a
    pure type-quadratic scan). An initialism rule (`GNN` ⇄ `Graph Neural Network`) auto-merges
    deterministically. Otherwise a non-identical pair must clear a combined
-   `jaro·0.6 + cosine·0.4` score **and** a **0.90 cosine semantic floor** — the semantic floor is
+   `jaro·0.6 + cosine·0.4` score **and** a **0.90 cosine semantic floor** (this cosine stage needs embeddings — the bare `resolve` CLI without a prior `embed` is string-only). The semantic floor is
    what separates near-string confusables (high string overlap, divergent meaning) from true
    variants. Scores in the flag band `[0.70, 0.85)` are recorded, never auto-merged.
 3. **Phase 3 — structural WCC** on `SIMILAR_TO` edges.
@@ -168,11 +168,11 @@ in *community summaries*) outperforms RAG over raw vector chunks. KnowledgeForge
 modes.
 
 **Community detection** (`community/detector.py`): build an undirected graph from semantic triples
-(weighting `SIMILAR_TO`/`SAME_AS`/`RELATED_TO` edges higher), run **Louvain**
-(`networkx.algorithms.community.louvain_communities`, seeded), filter to a minimum community size,
+(weighting `SIMILAR_TO`/`SAME_AS`/`RELATED_TO` edges higher), run **hierarchical Leiden**
+(`leidenalg`, seeded/deterministic, with a networkx-Louvain fallback), filter to a minimum community size,
 then generate and cache an LLM summary per community. On the vault this yields 16 summarised
-communities. *(Leiden + hierarchical communities are deferred — see roadmap; Louvain approximates
-Leiden quality for this scale.)*
+communities. *(Hierarchical Leiden is now implemented — seeded, deterministic, with a Louvain fallback;
+level-aware global search over the hierarchy is the remaining roadmap item.)*
 
 **Local mode** (`GraphRAG.ask(mode="local")`):
 1. **Anchor extraction** — semantic anchors (embedding search over the question, cosine floor 0.3)
@@ -187,9 +187,9 @@ Leiden quality for this scale.)*
 
 **Global mode** (`GraphRAG.ask(mode="global")`):
 1. Load cached community summaries.
-2. **Map step** — rank summaries by cosine similarity of the question vs each summary (or keyword
+2. **Rank step** — rank summaries by cosine similarity of the question vs each summary (or keyword
    overlap fallback), take the top-K.
-3. **Reduce step** — synthesise an answer across the top community summaries, citing themes.
+3. **Synthesis step** — synthesise an answer across the top community summaries in a single LLM call (not a true map-reduce), citing themes.
 
 Both modes are reachable over HTTP via the `mode` field on `POST /query`.
 
@@ -215,7 +215,7 @@ honestly **not yet built**:
 
 - Neo4j / GDS backend tier for millions of entities (the per-build N×N GraphSAGE training matrix and
   O(n²) candidate blocking are sized for this scale, not for millions).
-- Leiden + hierarchical communities (current: flat Louvain).
+- Level-aware global search over the community hierarchy (hierarchical Leiden + per-level reports are built; making global search drill the levels — plus true map-reduce — is the remaining work).
 - A trained TransE relation-as-first-class-vector scorer.
 - An inductive new-node embedding path (embed an unseen node without a full rebuild).
 - A pluggable adapter registry.

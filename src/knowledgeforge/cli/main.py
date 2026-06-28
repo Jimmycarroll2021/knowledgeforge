@@ -419,7 +419,7 @@ def embed(db: str, embeddings: str, model: str, batch_size: int) -> None:
 def community(db: str, model: str, min_size: int) -> None:
     """Build community graph + LLM summaries for global GraphRAG mode.
 
-    Implements Edge et al. 2024: Louvain community detection over semantic
+    Implements Edge et al. 2024: hierarchical Leiden community detection over semantic
     triples → LLM summary per community → enables 'query --mode global'.
 
     \b
@@ -431,7 +431,7 @@ def community(db: str, model: str, min_size: int) -> None:
 
     detector = CommunityDetector(store, model=model, min_community_size=min_size)
 
-    click.echo("\nCommunity detection (Louvain) + LLM summarisation")
+    click.echo("\nCommunity detection (hierarchical Leiden) + LLM summarisation")
     click.echo(f"  graph: {db}  model: {model}  min-size: {min_size}\n")
 
     result = detector.detect_and_summarise()
