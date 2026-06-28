@@ -44,7 +44,7 @@ class QueryRequest(BaseModel):
         "local",
         pattern="^(local|global|drift)$",
         description="local = k-hop subgraph retrieval; global = community-summary synthesis (Edge et al. 2024); "
-        "drift = community themes + local retrieval fused (Microsoft GraphRAG)",
+        "drift = DRIFT-style: community themes + local retrieval fusion (not the full Microsoft DRIFT loop)",
     )
 
 

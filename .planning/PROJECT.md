@@ -2,7 +2,7 @@
 
 ## What This Is
 
-KnowledgeForge is a domain-agnostic knowledge graph engine. A user clones the repo, drops raw unstructured data into the pipeline, and a best-in-class knowledge graph — validated, queryable, provenance-backed, LLM-assisted — is created automatically. Swapping the domain Adapter is the only change needed for a new domain.
+KnowledgeForge is a domain-agnostic knowledge graph engine. A user clones the repo, drops raw unstructured data into the pipeline, and a validated, queryable, provenance-backed, LLM-assisted knowledge graph is created automatically. Swapping the domain Adapter is the only change needed for a new domain.
 
 ## Core Value
 

@@ -11,22 +11,22 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 ## Gap-Closure Build (2026-06-21)
 
-A best-in-class build closed 11 P0+P1 audit gaps whose purpose was to make previously-aspirational
+A quality build closed 11 P0+P1 audit gaps whose purpose was to make previously-aspirational
 claims TRUE in the code. Every item below is verified against source, not asserted.
 
 | # | Gap | Resolution | Where |
 |---|-----|------------|-------|
 | 1 | GraphSAGE was a parameter-free average | **Learned** aggregator: trains weight matrix `W` via unsupervised GraphSAGE graph loss (random-walk positives + negative sampling, hand-derived backprop); `z = L2(ReLU(W·CONCAT(self, mean_nbrs)))` | `embeddings/pipeline.py` `_train_aggregator` / `_apply_aggregator` |
-| 2 | Entity resolution marked complete but UNMEASURED | **Measured F1 = 1.00** on benchmark, ≈0.92 on held-out novel terms; metaphone blocking, initialism rule, jaro+cosine with 0.90 semantic floor, flag band, transitive Union-Find, SAME_AS inferred edges | `resolution/resolver.py`, `tests/test_resolution_eval.py`, `tests/fixtures/er_labelled_pairs.json` |
+| 2 | Entity resolution marked complete but UNMEASURED | **Measured F1 = 1.00** on the 49-pair benchmark (held-out generalisation set not yet in CI); metaphone blocking, initialism rule, jaro+cosine with 0.90 semantic floor, flag band, transitive Union-Find, SAME_AS inferred edges | `resolution/resolver.py`, `tests/test_resolution_eval.py`, `tests/fixtures/er_labelled_pairs.json` |
 | 3 | Provenance fields not full PROV-O | `source` (producing agent), `lineage`, `valid_from`/`valid_to`, `schema_version` on every triple; resolver SAME_AS edges carry `source=EntityResolver` | `contracts.py`, `resolution/resolver.py` |
 | 4 | "Validation" was predicate-set membership only | SHACL-style `PropertyShape` (cardinality/target-class/datatype/severity); severity ladder with opt-in `strict` mode (default soft) | `contracts.py`, `pipeline.py` `_validate` |
 | 5 | Layers not real named graphs | `layer` is part of triple identity + CHECK constraint; `purge_layer` + recursive-CTE `neighbourhood`; vault separated 1068 source_facts + 73 inferred_relations | `store/sqlite.py` |
-| 6 | GraphRAG local only | Local k-hop with semantic anchors + trusted-layer filter (excludes `llm_hypotheses`); **global** mode via hierarchical-Leiden communities + LLM summaries + map-reduce; **drift** mode (themes + local retrieval); reachable over HTTP via `mode` field | `inference/graphrag.py`, `community/detector.py` |
+| 6 | GraphRAG local only | Local k-hop with semantic anchors + trusted-layer filter (excludes `llm_hypotheses`); **global** mode via hierarchical-Leiden communities + LLM summaries (rank top-K → single synthesis, not yet map-reduce); **drift**-style mode (themes + local retrieval fusion); reachable over HTTP via `mode` field | `inference/graphrag.py`, `community/detector.py` |
 | 7 | API surface incomplete | `/health /ingest /query /embed /similar /graph/stats /graph/node /graph/path /graph/provenance /graph/community /graph/resolve` | `api/routes/*` |
 | 8 | No security/observability | Config-gated API-key auth (`KF_API_KEY`), rate limiting (`KF_RATE_LIMIT`), structured JSON request logging + `X-Request-ID` | `api/security.py` |
 
 Deferred (NOT yet built — single-machine scope): Neo4j/GDS backend tier, **level-aware global
-search** over the community hierarchy (+ MRR@10 measurement), TransE relation-as-first-class-vector
+search** over the community hierarchy (+ true map-reduce synthesis, the full DRIFT primer→follow-up→refine loop, and an answer-quality eval harness: retrieval MRR/nDCG + faithfulness), TransE relation-as-first-class-vector
 scorer, inductive new-node embedding path, pluggable adapter registry, and a pluggable `GraphStore`
 Protocol (the prerequisite for the Neo4j tier — the store is currently the concrete
 `SQLiteGraphStore`). Per-build N×N GraphSAGE matrix and O(n²) blocking are fine for
@@ -46,7 +46,7 @@ clean. Remaining: make global search level-aware and measure it (MRR@10).
 |-------|------|--------|-------|
 | 1 | Foundation | ✅ COMPLETE | Triple + Adapter Protocol, VaultAdapter + UniversalAdapter |
 | 2 | Triple Engine | ✅ COMPLETE | SQLite WAL store, PROV-O provenance, named layers, pipeline, CLI |
-| 3 | Entity Resolution | ✅ SHIPPED + **MEASURED F1 = 1.00** | Was wrongly marked "complete" while unmeasured. Now: metaphone blocking → jaro+cosine (0.90 semantic floor) → Union-Find → SAME_AS; benchmark F1 = 1.00 (gate ≥ 0.85), ≈0.92 on held-out novel terms |
+| 3 | Entity Resolution | ✅ SHIPPED + **MEASURED F1 = 1.00** | Was wrongly marked "complete" while unmeasured. Now: metaphone blocking → jaro+cosine (0.90 semantic floor) → Union-Find → SAME_AS; benchmark F1 = 1.00 (gate ≥ 0.85); held-out generalisation set not yet in CI |
 | 4 | Embedding Pipeline | ✅ COMPLETE | **Learned** GraphSAGE aggregator (unsupervised graph loss, hand-derived backprop) + turbovec SIMD + ChromaDB |
 | 5 | GraphRAG | ✅ COMPLETE | Local k-hop (trusted-layer grounding) + global community synthesis; path finder; OAuth CLI fallback |
 | 6 | Query API | ✅ COMPLETE | FastAPI + Docker; resolve/community endpoints; config-gated auth/rate-limit/logging |

@@ -83,7 +83,7 @@ Entity-resolution quality is **measured**, not asserted — see the next section
 Earlier versions marked entity resolution "complete" with no measurement. That is corrected. Resolution is now evaluated against a hand-labelled benchmark of graph-ML entity ids (`tests/fixtures/er_labelled_pairs.json` — 25 true surface variants + 24 confusable negatives such as GraphSAGE/GraphSAINT and TransE/TransR):
 
 - **F1 = 1.00 on the benchmark** (`tests/test_resolution_eval.py`, gate ≥ 0.85, red by design if it regresses)
-- **F1 ≈ 0.92 on held-out novel terms** (generalisation, not benchmark overfit)
+- **Generalisation:** a held-out generalisation set is **not yet in CI** — only the 49-pair benchmark above is measured and gated. (An informal probe on novel terms looked strong, but it is not a CI-backed number.)
 
 How it works (`src/knowledgeforge/resolution/resolver.py`):
 
@@ -135,7 +135,7 @@ knowledgeforge query "what is GraphSAGE?"
 # 6b. Global query — synthesise across community summaries (Edge et al. 2024)
 knowledgeforge query "what are the main method families?" --mode global
 
-# 6c. DRIFT query — community themes + local retrieval fused (Microsoft GraphRAG)
+# 6c. DRIFT-style query — community themes + local retrieval fusion (not the full Microsoft DRIFT loop)
 knowledgeforge query "how does GraphSAGE relate to GCN?" --mode drift
 ```
 
@@ -289,7 +289,7 @@ Every layer implements what the primary literature specifies — not a wrapper a
 | Node Embeddings | Hamilton et al. 2017 — GraphSAGE (NeurIPS) | **learned** unsupervised aggregator `z = L2(ReLU(W·CONCAT(self, mean_nbrs)))`, graph loss + negative sampling, hand-derived backprop |
 | Similarity Search | Google TurboQuant (2024) | 4-bit SIMD quantised ANN via turbovec |
 | Communities | Edge et al. 2024 — arXiv:2404.16130 | Louvain detection + LLM community summaries |
-| Graph Retrieval | Edge et al. 2024 — arXiv:2404.16130 | local k-hop (trusted-layer grounding) + global community synthesis (map-reduce) |
+| Graph Retrieval | Edge et al. 2024 — arXiv:2404.16130 | local k-hop (trusted-layer grounding) + global community-summary synthesis (rank top-K → single grounded synthesis; true map-reduce is roadmap) + DRIFT-style fusion |
 | GNN Theory | Battaglia et al. 2018 — arXiv:1806.01261 | triple-as-unit + adapter-as-generalisation inductive bias |
 
 Full mapping: [`docs/research-alignment.md`](docs/research-alignment.md)
@@ -301,7 +301,7 @@ Full mapping: [`docs/research-alignment.md`](docs/research-alignment.md)
 These are honestly **deferred** — the current single-machine engine does not do them yet:
 
 - **Neo4j / GDS backend tier** for millions of entities (replaces the per-build N×N GraphSAGE matrix and O(n²) blocking, which are fine for hundreds–low-thousands of entities only).
-- **Level-aware global search + community-report measurement (MRR@10)**. Hierarchical Leiden community detection (deterministic; `level` + `parent_community_id`, coarse→fine) and a **DRIFT** query mode are now built (`community/detector.py`, `inference/graphrag.py`); making global search drill the hierarchy and proving the gain with MRR@10 is the remaining work.
+- **Level-aware global search + community-report measurement (MRR@10)**. Hierarchical Leiden community detection (deterministic; `level` + `parent_community_id`, coarse→fine) and a **DRIFT** query mode are now built (`community/detector.py`, `inference/graphrag.py`); making global search drill the hierarchy and proving the gain with MRR@10 is the remaining work. Also pending: **true map-reduce** global synthesis (today it ranks top-K summaries and makes a single LLM call), the **full DRIFT loop** (primer → follow-up subqueries → refine; today it is themes + local fusion), and an **answer-quality eval harness** (retrieval MRR/nDCG + answer faithfulness).
 - **TransE relation-as-first-class-vector scorer** (currently TransE is cited as the theoretical grounding for the triple unit, not implemented as a trained scorer).
 - **Inductive new-node embedding path** (embed an unseen node without a full rebuild).
 - **Pluggable adapter registry** (currently adapters are wired explicitly).

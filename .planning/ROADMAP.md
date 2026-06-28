@@ -1,7 +1,7 @@
 # KnowledgeForge — Roadmap
 
 **Goal:** Raw unstructured data in → validated, queryable, provenance-backed knowledge graph out. One command.  
-**Success bar:** Best-in-class — implements what the research actually says (RDF, SHACL, PROV-O, real GraphRAG).
+**Success bar:** Faithfully implements what the research actually says (RDF, SHACL, PROV-O, real GraphRAG) — measured, not asserted. "Best-in-class" is earned only after answer-quality evals prove it.
 
 ---
 

@@ -43,7 +43,7 @@ _DEFAULT_DB = Path("data/graph.db")
 
 @click.group()
 def cli() -> None:
-    """KnowledgeForge — raw data in, best-in-class knowledge graph out."""
+    """KnowledgeForge — raw data in, a validated, queryable knowledge graph out."""
 
 
 @cli.command()
@@ -289,7 +289,7 @@ def resolve(db: str, threshold: float) -> None:
     type=click.Choice(["local", "global", "drift"]),
     show_default=True,
     help="local=k-hop BFS; global=community summaries (Edge et al. 2024); "
-    "drift=community themes + local retrieval fused (Microsoft GraphRAG).",
+    "drift=DRIFT-style: community themes + local retrieval fusion (not the full Microsoft DRIFT loop).",
 )
 def query(
     question: str,

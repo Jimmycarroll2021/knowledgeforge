@@ -1,7 +1,7 @@
 [project]
 name = "knowledgeforge"
 version = "0.1.0"
-description = "Domain-agnostic knowledge graph engine — raw unstructured data in, best-in-class KG out"
+description = "Domain-agnostic knowledge graph engine — raw unstructured data in, a validated, provenance-backed, queryable KG out"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.28",

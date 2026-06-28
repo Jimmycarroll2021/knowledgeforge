@@ -18,7 +18,7 @@ code is now the source of truth.
 | Embedding Pipeline | Hamilton et al. 2017 — GraphSAGE | **Learned** unsupervised aggregator with graph loss + negative sampling (Algorithm 1) |
 | Relation Embeddings | Bordes et al. 2013 — TransE | `h + r ≈ t` — cited as theoretical grounding for the triple unit (scorer not yet trained — see roadmap) |
 | Similarity Search | Google TurboQuant (2024) | 4-bit SIMD quantisation for approximate nearest-neighbour |
-| Communities + GraphRAG | Edge et al. 2024 — arXiv:2404.16130 | Louvain communities + LLM summaries; local k-hop + global map-reduce synthesis |
+| Communities + GraphRAG | Edge et al. 2024 — arXiv:2404.16130 | hierarchical Leiden communities + LLM summaries; local k-hop + global rank-top-K-then-synthesise (single LLM call; not yet map-reduce) |
 | GNN Foundation | Battaglia et al. 2018 — Relational Inductive Biases | Graph networks as the right inductive bias for relational data |
 | Graph Convolution | Kipf & Welling 2016 — GCN | Spectral graph convolutions (foundation for GraphSAGE) |
 
@@ -89,7 +89,7 @@ The resolver (`resolution/resolver.py`) is evaluated against a hand-labelled ben
 GraphSAGE/GraphSAINT, TransE/TransR, GCN/R-GCN):
 
 - **F1 = 1.00 on the benchmark** (`tests/test_resolution_eval.py`, gate ≥ 0.85 — red by design on regression)
-- **F1 ≈ 0.92 on held-out novel terms** (generalisation, not overfit to the benchmark)
+- **Generalisation:** not yet measured in CI — only the 49-pair benchmark is gated (F1 = 1.00, gate ≥ 0.85). A held-out generalisation set is roadmap.
 
 Pipeline:
 
